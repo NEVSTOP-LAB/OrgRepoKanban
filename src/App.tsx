@@ -124,6 +124,7 @@ function App() {
   const [connecting, setConnecting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [subjectLoading, setSubjectLoading] = useState(false)
+  const [loadingProgress, setLoadingProgress] = useState<{ completed: number; total: number } | null>(null)
   const [writing, setWriting] = useState(false)
   const [repos, setRepos] = useState<GithubRepo[]>([])
   const [teamOptions, setTeamOptions] = useState<TeamFlatOption[]>([])
@@ -210,33 +211,50 @@ function App() {
   ) => {
     if (!userLogin) return
     setSubjectLoading(true)
+    setLoadingProgress({ completed: 0, total: activeRepos.length })
 
     try {
-      // Load effective permission per repo for this user
+      // 并发加载每个仓库的用户权限（限制并发数避免触发 API 限流）
+      const CONCURRENCY = 6
       const permissionMap: Record<string, PermissionLevel> = {}
-      for (const repo of activeRepos) {
-        try {
-          permissionMap[repo.name] = await activeClient.getUserRepoPermission(repo.name, userLogin)
-        } catch {
-          permissionMap[repo.name] = 'none'
+      let completed = 0
+
+      const queue = [...activeRepos]
+      const runWorker = async () => {
+        while (queue.length > 0) {
+          const repo = queue.shift()!
+          try {
+            permissionMap[repo.name] = await activeClient.getUserRepoPermission(repo.name, userLogin)
+          } catch {
+            permissionMap[repo.name] = 'none'
+          }
+          completed++
+          setLoadingProgress({ completed, total: activeRepos.length })
         }
       }
+
+      const workers = Array.from({ length: Math.min(CONCURRENCY, activeRepos.length) }, () => runWorker())
+      await Promise.all(workers)
 
       setUserPermissions((previous) => ({
         ...previous,
         [userLogin]: permissionMap,
       }))
 
-      // Load team-inherited permissions for this user
+      // 并发加载用户所属团队的继承权限
       const userTeams = await activeClient.listUserTeams(userLogin)
       if (userTeams.length > 0) {
+        const teamResults = await Promise.all(
+          userTeams.map((teamSlug) => activeClient.listTeamRepos(teamSlug)),
+        )
+
         const teamPermMap: Record<string, PermissionLevel> = {}
         for (const repo of activeRepos) {
           teamPermMap[repo.name] = 'none'
         }
-        for (const teamSlug of userTeams) {
-          const teamRepos = await activeClient.listTeamRepos(teamSlug)
-          const teamMap = toPermissionMap(activeRepos, teamRepos)
+
+        for (let i = 0; i < userTeams.length; i++) {
+          const teamMap = toPermissionMap(activeRepos, teamResults[i])
           for (const repo of activeRepos) {
             const teamPerm = teamMap[repo.name] ?? 'none'
             const current = teamPermMap[repo.name] ?? 'none'
@@ -263,6 +281,7 @@ function App() {
       })
     } finally {
       setSubjectLoading(false)
+      setLoadingProgress(null)
     }
   }
 
@@ -821,6 +840,26 @@ function App() {
             {subjectLoading ? (
               <div className="empty-state">
                 <strong>正在加载当前主体的权限快照...</strong>
+                {loadingProgress && loadingProgress.total > 0 && (
+                  <div style={{ width: '100%', maxWidth: 400, margin: '12px auto' }}>
+                    <div style={{
+                      background: '#e0e0e0',
+                      borderRadius: 4,
+                      height: 8,
+                      overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        background: '#4caf50',
+                        height: '100%',
+                        width: `${Math.round((loadingProgress.completed / loadingProgress.total) * 100)}%`,
+                        transition: 'width 0.2s ease',
+                      }} />
+                    </div>
+                    <span style={{ fontSize: 12, color: '#666', marginTop: 4, display: 'inline-block' }}>
+                      {loadingProgress.completed} / {loadingProgress.total} 仓库已完成
+                    </span>
+                  </div>
+                )}
                 <span>读取完成后会自动刷新看板位置。</span>
               </div>
             ) : (
