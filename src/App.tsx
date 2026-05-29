@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import './App.css'
 import {
@@ -27,6 +27,17 @@ import { GithubClient } from './github/client'
 import { executePermissionBatch } from './github/mutations'
 
 type SubjectKind = 'team' | 'user'
+
+type PermissionSubject =
+  | { kind: 'team'; key: string }
+  | { kind: 'user'; key: string }
+
+interface QueuedMove {
+  client: GithubClient
+  subject: PermissionSubject
+  repoNames: string[]
+  target: PermissionLevel
+}
 
 interface Notice {
   tone: 'success' | 'warning' | 'error' | 'info'
@@ -104,6 +115,16 @@ function buildBatchNotice(
   }
 }
 
+function buildQueueNotice(move: QueuedMove): Notice {
+  const prefix = move.repoNames.length > 1 ? '批量移动已确认，已加入操作队列。' : '单个移动已加入操作队列。'
+
+  return {
+    tone: 'info',
+    title: prefix,
+    description: `待处理仓库数：${move.repoNames.length}`,
+  }
+}
+
 const REPO_FILTER_PRESETS: Array<{ key: RepoFilterPreset; label: string }> = [
   { key: 'all', label: '全部' },
   { key: 'public', label: '仅 Public' },
@@ -137,6 +158,10 @@ function App() {
   const [filterPreset, setFilterPreset] = useState<RepoFilterPreset>('all')
   const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<Notice | null>(null)
+  const reposRef = useRef<GithubRepo[]>([])
+  const teamPermissionsRef = useRef<Record<string, Record<string, PermissionLevel>>>({})
+  const userPermissionsRef = useRef<Record<string, Record<string, PermissionLevel>>>({})
+  const queueChainRef = useRef<Promise<void>>(Promise.resolve())
 
   const repoCards = repos.map((repo) => ({
     id: repo.id,
@@ -154,19 +179,31 @@ function App() {
 
   const hasConnectedData = repos.length > 0 && isAdmin === true
 
-  const updateCurrentSubjectPermissions = (nextMap: Record<string, PermissionLevel>) => {
-    if (subjectKind === 'team') {
+  const updateSubjectPermissions = (
+    subject: PermissionSubject,
+    nextMap: Record<string, PermissionLevel>,
+  ) => {
+    if (subject.kind === 'team') {
       setTeamPermissions((previous) => ({
         ...previous,
-        [selectedTeam]: nextMap,
+        [subject.key]: nextMap,
       }))
       return
     }
 
     setUserPermissions((previous) => ({
       ...previous,
-      [selectedUser]: nextMap,
+      [subject.key]: nextMap,
     }))
+  }
+
+  const getSubjectPermissions = (subject: PermissionSubject) => {
+    const fallback = buildEmptyPermissionMap(reposRef.current)
+    if (subject.kind === 'team') {
+      return teamPermissionsRef.current[subject.key] ?? fallback
+    }
+
+    return userPermissionsRef.current[subject.key] ?? fallback
   }
 
   const loadCollaborators = async (
@@ -374,6 +411,59 @@ function App() {
     setSelectedRepos(new Set())
   }, [filterPreset, filterQuery])
 
+  useEffect(() => {
+    reposRef.current = repos
+  }, [repos])
+
+  useEffect(() => {
+    teamPermissionsRef.current = teamPermissions
+  }, [teamPermissions])
+
+  useEffect(() => {
+    userPermissionsRef.current = userPermissions
+  }, [userPermissions])
+
+  const processQueuedMove = async (move: QueuedMove) => {
+    const previous = getSubjectPermissions(move.subject)
+    const optimistic = applyOptimisticPermission(previous, move.repoNames, move.target)
+
+    updateSubjectPermissions(move.subject, optimistic)
+    setWriting(true)
+    setNotice({
+      tone: 'info',
+      title: '正在顺序执行操作队列。',
+      description: `当前处理仓库数：${move.repoNames.length}`,
+    })
+
+    try {
+      const results = await executePermissionBatch(move.client, {
+        subject: move.subject,
+        repoNames: move.repoNames,
+        target: move.target,
+      })
+
+      const settled = reconcileBatchResults(previous, optimistic, results)
+      updateSubjectPermissions(move.subject, settled.next)
+      setNotice(buildBatchNotice(move.target, settled.success, settled.failed))
+    } catch (error) {
+      updateSubjectPermissions(move.subject, previous)
+      setNotice({
+        tone: 'error',
+        title: '操作队列执行失败。',
+        description: formatError(error, '写入 GitHub 权限时出现未预期错误。'),
+      })
+    } finally {
+      setWriting(false)
+    }
+  }
+
+  const enqueueMove = (move: QueuedMove) => {
+    setNotice(buildQueueNotice(move))
+    queueChainRef.current = queueChainRef.current
+      .catch(() => undefined)
+      .then(() => processQueuedMove(move))
+  }
+
   const handleMoveRequested = async (
     repoNames: string[],
     target: PermissionLevel,
@@ -407,38 +497,26 @@ function App() {
       return
     }
 
-    const targetLabel =
-      target === 'none' ? '未授权（移除权限）' : PERMISSION_DISPLAY_LABELS[target]
-    const confirmed = window.confirm(
-      `即将把 ${repoNames.length} 个仓库设置到 ${targetLabel}。是否继续？`,
-    )
-    if (!confirmed) {
-      return
+    if (repoNames.length > 1) {
+      const targetLabel =
+        target === 'none' ? '未授权（移除权限）' : PERMISSION_DISPLAY_LABELS[target]
+      const confirmed = window.confirm(
+        `即将把 ${repoNames.length} 个仓库设置到 ${targetLabel}。是否继续？`,
+      )
+      if (!confirmed) {
+        return
+      }
     }
 
-    const previous = currentPermissionMap
-    const optimistic = applyOptimisticPermission(previous, repoNames, target)
-    updateCurrentSubjectPermissions(optimistic)
-    setWriting(true)
-    setNotice({
-      tone: 'info',
-      title: '正在提交批量权限变更。',
-      description: `待处理仓库数：${repoNames.length}`,
-    })
-
-    const results = await executePermissionBatch(client, {
+    enqueueMove({
+      client,
       subject,
       repoNames,
       target,
     })
-
-    const settled = reconcileBatchResults(previous, optimistic, results)
-    updateCurrentSubjectPermissions(settled.next)
-    setNotice(buildBatchNotice(target, settled.success, settled.failed))
-    setWriting(false)
   }
 
-  const isBusy = connecting || refreshing || subjectLoading || writing
+  const isBusy = connecting || refreshing || subjectLoading
 
   return (
     <main className="app-shell">
