@@ -1,0 +1,74 @@
+:root {
+  --page: #f5efe4;
+  --page-deep: #efe3cf;
+  --ink: #1c2933;
+  --ink-soft: #52606d;
+  --ink-muted: #6b7784;
+  --line: rgba(28, 41, 51, 0.12);
+  --card: rgba(255, 251, 244, 0.94);
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: 'IBM Plex Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--page);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, rgba(255, 122, 69, 0.2), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(44, 154, 142, 0.16), transparent 25%),
+    linear-gradient(180deg, var(--page) 0%, var(--page-deep) 100%);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Space Grotesk', 'IBM Plex Sans', 'Noto Sans SC', sans-serif;
+}
+
+h1 {
+  font-size: clamp(2.4rem, 5vw, 4.6rem);
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+}
+
+h2 {
+  font-size: 1.25rem;
+  line-height: 1.15;
+}
+
+a {
+  color: inherit;
+}
