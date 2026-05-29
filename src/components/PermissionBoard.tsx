@@ -1,6 +1,7 @@
 import { buildBoardColumns, type RepoSummary } from '../domain/board'
 import {
   PERMISSION_COLUMNS,
+  PERMISSION_DISPLAY_LABELS,
   type PermissionLevel,
 } from '../domain/permissions'
 
@@ -16,15 +17,6 @@ export interface PermissionBoardProps {
   interactive?: boolean
   onToggleSelect: (repoName: string, additive: boolean) => void
   onMoveRequested: (repoNames: string[], target: PermissionLevel) => void
-}
-
-const COLUMN_LABELS: Record<PermissionLevel, string> = {
-  none: '未授权',
-  pull: 'pull',
-  triage: 'triage',
-  push: 'push',
-  maintain: 'maintain',
-  admin: 'admin',
 }
 
 function parsePayload(raw: string): MovePayload | null {
@@ -109,7 +101,7 @@ export function PermissionBoard(props: PermissionBoardProps) {
           onDrop={(event) => onDrop(event, column)}
         >
           <header className="column-header">
-            <h3>{COLUMN_LABELS[column]}</h3>
+            <h3>{PERMISSION_DISPLAY_LABELS[column]}</h3>
             <span>{columns[column].length}</span>
           </header>
 

@@ -51,6 +51,8 @@ describe('PermissionBoard', () => {
       />,
     )
 
+    expect(screen.getByText('Read')).toBeInTheDocument()
+    expect(screen.getByText('Write')).toBeInTheDocument()
     expect(screen.getByTestId('column-pull')).toHaveTextContent('repo-a')
     expect(screen.getByTestId('column-none')).toHaveTextContent('repo-b')
   })

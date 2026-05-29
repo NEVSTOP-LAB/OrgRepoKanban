@@ -6,7 +6,10 @@ import {
   reconcileBatchResults,
 } from './domain/batch'
 import { toggleSelection } from './domain/selection'
-import type { PermissionLevel } from './domain/permissions'
+import {
+  PERMISSION_DISPLAY_LABELS,
+  type PermissionLevel,
+} from './domain/permissions'
 import { PermissionBoard } from './components/PermissionBoard'
 import {
   buildTeamTreeOptions,
@@ -79,7 +82,8 @@ function buildBatchNotice(
   successRepos: string[],
   failedRepos: Array<{ repo: string; error: string }>,
 ): Notice {
-  const actionText = target === 'none' ? '移除授权' : `设置为 ${target}`
+  const actionText =
+    target === 'none' ? '移除授权' : `设置为 ${PERMISSION_DISPLAY_LABELS[target]}`
 
   if (failedRepos.length === 0) {
     return {
@@ -387,7 +391,8 @@ function App() {
       return
     }
 
-    const targetLabel = target === 'none' ? '未授权（移除权限）' : target
+    const targetLabel =
+      target === 'none' ? '未授权（移除权限）' : PERMISSION_DISPLAY_LABELS[target]
     const confirmed = window.confirm(
       `即将把 ${repoNames.length} 个仓库设置到 ${targetLabel}。是否继续？`,
     )
@@ -430,7 +435,7 @@ function App() {
           </p>
           <div className="badge-row">
             <span className="badge">仅限组织管理员写入</span>
-            <span className="badge">支持 pull 到 admin 全权限层级</span>
+            <span className="badge">支持 Read 到 Admin 全权限层级</span>
             <span className="badge">失败会回滚并对账最终结果</span>
           </div>
         </div>

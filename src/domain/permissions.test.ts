@@ -9,8 +9,10 @@ import {
 describe('normalizePermission', () => {
   it('maps github permission strings to supported levels', () => {
     expect(normalizePermission('pull')).toBe('pull')
+    expect(normalizePermission('read')).toBe('pull')
     expect(normalizePermission('triage')).toBe('triage')
     expect(normalizePermission('push')).toBe('push')
+    expect(normalizePermission('write')).toBe('push')
     expect(normalizePermission('maintain')).toBe('maintain')
     expect(normalizePermission('admin')).toBe('admin')
   })

@@ -15,6 +15,15 @@ export const PERMISSION_COLUMNS: PermissionLevel[] = [
   'none',
 ]
 
+export const PERMISSION_DISPLAY_LABELS: Record<PermissionLevel, string> = {
+  none: '未授权',
+  pull: 'Read',
+  triage: 'Triage',
+  push: 'Write',
+  maintain: 'Maintain',
+  admin: 'Admin',
+}
+
 const PERMISSION_RANK: Record<PermissionLevel, number> = {
   none: 0,
   pull: 1,
@@ -30,7 +39,7 @@ export function normalizePermission(value: string | null | undefined): Permissio
   }
 
   const normalized = value.toLowerCase()
-  if (normalized === 'pull') {
+  if (normalized === 'pull' || normalized === 'read') {
     return 'pull'
   }
 
