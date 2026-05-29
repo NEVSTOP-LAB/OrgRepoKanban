@@ -379,6 +379,33 @@
   line-height: 1.35;
   cursor: pointer;
   box-shadow: 0 6px 18px rgba(28, 41, 51, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.repo-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-card-link {
+  flex-shrink: 0;
+  color: var(--ink-muted);
+  text-decoration: none;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.5;
+  transition: opacity 140ms ease;
+}
+
+.repo-card-link:hover {
+  opacity: 1;
+  color: var(--ink);
 }
 
 .repo-card.selected {

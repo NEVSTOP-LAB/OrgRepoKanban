@@ -136,7 +136,17 @@ export function PermissionBoard(props: PermissionBoardProps) {
                   }}
                   aria-label={repo.name}
                 >
-                  {repo.name}
+                  <span className="repo-card-name">{repo.name}</span>
+                  <a
+                    className="repo-card-link"
+                    href={repo.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`在 GitHub 中打开 ${repo.name}`}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    ↗
+                  </a>
                 </button>
               )
             })}
