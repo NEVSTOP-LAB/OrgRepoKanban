@@ -7,12 +7,12 @@ export type PermissionLevel =
   | 'admin'
 
 export const PERMISSION_COLUMNS: PermissionLevel[] = [
-  'none',
   'pull',
   'triage',
   'push',
   'maintain',
   'admin',
+  'none',
 ]
 
 const PERMISSION_RANK: Record<PermissionLevel, number> = {
