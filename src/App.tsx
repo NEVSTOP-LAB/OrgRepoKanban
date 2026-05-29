@@ -299,7 +299,7 @@ function App() {
       const flattenedTeams = flattenTeamTree(buildTeamTreeOptions(teams))
       const defaultTeam = flattenedTeams[0]?.team.slug ?? ''
 
-      // On refresh, preserve the user's current view; on initial connect, default to
+      // On refresh, preserve the current subject kind (team vs. user). On initial connect, default to
       // team mode when teams exist. If teams disappeared, force back to user mode.
       const nextSubjectKind = defaultTeam
         ? (isRefresh ? subjectKind : 'team')
