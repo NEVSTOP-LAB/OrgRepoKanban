@@ -91,6 +91,12 @@ export class GithubClient {
     const response = await this.request<UserRepoPermissionResponse>(
       `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/collaborators/${encodeURIComponent(userLogin)}/permission`,
     )
+    if (response.role_name) {
+      const byRoleName = normalizePermission(response.role_name)
+      if (byRoleName !== 'none') {
+        return byRoleName
+      }
+    }
     return normalizePermission(response.permission ?? 'none')
   }
 
@@ -98,18 +104,24 @@ export class GithubClient {
     const teams = await this.paginate<GithubTeam[]>(
       `/orgs/${encodeURIComponent(this.org)}/teams?per_page=100`,
     )
-    const userTeams: string[] = []
-    for (const team of teams) {
-      try {
-        await this.requestVoid(
-          `/orgs/${encodeURIComponent(this.org)}/teams/${encodeURIComponent(team.slug)}/memberships/${encodeURIComponent(userLogin)}`,
-        )
-        userTeams.push(team.slug)
-      } catch {
-        // 404 means user is not in this team, skip
-      }
-    }
-    return userTeams
+
+    const results = await Promise.all(
+      teams.map(async (team) => {
+        try {
+          await this.requestVoid(
+            `/orgs/${encodeURIComponent(this.org)}/teams/${encodeURIComponent(team.slug)}/memberships/${encodeURIComponent(userLogin)}`,
+          )
+          return team.slug
+        } catch (error) {
+          if ((error as HttpError).status === 404) {
+            return null
+          }
+          throw error
+        }
+      }),
+    )
+
+    return results.filter((slug): slug is string => slug !== null)
   }
 
   async setTeamRepoPermission(
