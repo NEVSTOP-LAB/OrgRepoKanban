@@ -22,8 +22,8 @@ const teams: GithubTeam[] = [
 ]
 
 const repos: GithubRepo[] = [
-  { id: 10, name: 'api', full_name: 'acme/api' },
-  { id: 11, name: 'portal', full_name: 'acme/portal' },
+  { id: 10, name: 'api', full_name: 'acme/api', html_url: 'https://github.com/acme/api' },
+  { id: 11, name: 'portal', full_name: 'acme/portal', html_url: 'https://github.com/acme/portal' },
 ]
 
 describe('buildTeamTreeOptions', () => {
