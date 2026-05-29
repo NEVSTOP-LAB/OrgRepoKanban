@@ -84,10 +84,10 @@ describe('searchRepoByName', () => {
 
 describe('buildBoardColumns with inheritedFilter', () => {
   const testRepos: RepoSummary[] = [
-    { id: 1, name: 'repo-a', fullName: 'org/repo-a', isPrivate: false },
-    { id: 2, name: 'repo-b', fullName: 'org/repo-b', isPrivate: true },
-    { id: 3, name: 'repo-c', fullName: 'org/repo-c', isPrivate: false },
-    { id: 4, name: 'repo-d', fullName: 'org/repo-d', isPrivate: false },
+    { id: 1, name: 'repo-a', fullName: 'org/repo-a', url: 'https://github.com/org/repo-a', isPrivate: false },
+    { id: 2, name: 'repo-b', fullName: 'org/repo-b', url: 'https://github.com/org/repo-b', isPrivate: true },
+    { id: 3, name: 'repo-c', fullName: 'org/repo-c', url: 'https://github.com/org/repo-c', isPrivate: false },
+    { id: 4, name: 'repo-d', fullName: 'org/repo-d', url: 'https://github.com/org/repo-d', isPrivate: false },
   ]
 
   const childPermissions: Record<string, PermissionLevel> = {
