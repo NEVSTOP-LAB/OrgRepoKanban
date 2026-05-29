@@ -427,6 +427,91 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('reloads individual collaborators when refreshing while in user mode', async () => {
+    function makeAdminResponse() {
+      return new Response(JSON.stringify({ role: 'admin' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+
+    function makeReposResponse() {
+      return new Response(
+        JSON.stringify([
+          { id: 1, name: 'repo-a', full_name: 'acme/repo-a', private: false, fork: false },
+        ]),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }
+
+    function makeTeamsResponse() {
+      return new Response(
+        JSON.stringify([{ id: 10, slug: 'platform', name: 'Platform', parent: null }]),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }
+
+    function makeTeamReposResponse() {
+      return new Response(JSON.stringify([{ name: 'repo-a', role_name: 'push' }]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+
+    function makeCollaboratorsResponse() {
+      return new Response(
+        JSON.stringify([{ login: 'alice', permission: 'admin' }]),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }
+
+    // Initial connect: admin check, repos, teams, team repos
+    fetchMock
+      .mockResolvedValueOnce(makeAdminResponse())
+      .mockResolvedValueOnce(makeReposResponse())
+      .mockResolvedValueOnce(makeTeamsResponse())
+      .mockResolvedValueOnce(makeTeamReposResponse())
+
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('个人访问令牌'), { target: { value: 'token-value' } })
+    fireEvent.change(screen.getByLabelText('组织名称'), { target: { value: 'acme' } })
+    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
+    })
+
+    // Switch to individual-collaborator mode; this triggers collaborator loading for repo-a
+    fetchMock.mockResolvedValueOnce(makeCollaboratorsResponse())
+
+    fireEvent.change(screen.getByLabelText('主体类型'), { target: { value: 'user' } })
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('个人协作者')).toHaveValue('alice')
+    })
+
+    expect(screen.getByTestId('column-admin')).toHaveTextContent('repo-a')
+
+    // Refresh: admin check, repos, teams, collaborators (because we're in user mode)
+    fetchMock
+      .mockResolvedValueOnce(makeAdminResponse())
+      .mockResolvedValueOnce(makeReposResponse())
+      .mockResolvedValueOnce(makeTeamsResponse())
+      .mockResolvedValueOnce(makeCollaboratorsResponse())
+
+    fireEvent.click(screen.getByRole('button', { name: '重新从 GitHub 加载' }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('个人协作者')).toHaveValue('alice')
+    })
+
+    // Should still show alice's admin permission on repo-a after refresh
+    expect(screen.getByTestId('column-admin')).toHaveTextContent('repo-a')
+    // And the subject kind selector should still be on user mode
+    expect(screen.getByLabelText('主体类型')).toHaveValue('user')
+  })
+
   it('blocks non-admin token and shows warning', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ role: 'member' }), {

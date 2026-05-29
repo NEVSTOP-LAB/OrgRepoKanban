@@ -169,6 +169,9 @@ function App() {
   const teamPermissionsRef = useRef<Record<string, Record<string, PermissionLevel>>>({})
   const userPermissionsRef = useRef<Record<string, Record<string, PermissionLevel>>>({})
   const queueChainRef = useRef<Promise<void>>(Promise.resolve())
+  // Tracks when connectOrganization is already loading collaborators so the
+  // useEffect below doesn't start a duplicate concurrent load.
+  const connectLoadingCollaboratorsRef = useRef(false)
 
   const repoCards = repos.map((repo) => ({
     id: repo.id,
@@ -315,6 +318,12 @@ function App() {
       const flattenedTeams = flattenTeamTree(buildTeamTreeOptions(teams))
       const defaultTeam = flattenedTeams[0]?.team.slug ?? ''
 
+      // On refresh, preserve the current subject kind (team vs. user). On initial connect, default to
+      // team mode when teams exist. If teams disappeared, force back to user mode.
+      const nextSubjectKind = defaultTeam
+        ? (isRefresh ? subjectKind : 'team')
+        : 'user'
+
       setClient(nextClient)
       setRepos(repoList)
       setTeamOptions(flattenedTeams)
@@ -323,10 +332,10 @@ function App() {
       setUsersLoaded(false)
       setUserPermissions({})
       setSelectedUser('')
-      setSubjectKind(defaultTeam ? 'team' : 'user')
+      setSubjectKind(nextSubjectKind)
       setSelectedTeam(defaultTeam)
 
-      if (defaultTeam) {
+      if (nextSubjectKind === 'team' && defaultTeam) {
         setSubjectLoading(true)
         const teamRepoPermissions = await nextClient.listTeamRepos(defaultTeam)
         setTeamPermissions({
@@ -334,7 +343,14 @@ function App() {
         })
         setSubjectLoading(false)
       } else {
-        await loadCollaborators(nextClient, repoList)
+        // Guard the ref before awaiting so the useEffect below skips its own
+        // loadCollaborators call while connectOrganization is already loading.
+        connectLoadingCollaboratorsRef.current = true
+        try {
+          await loadCollaborators(nextClient, repoList)
+        } finally {
+          connectLoadingCollaboratorsRef.current = false
+        }
       }
 
       setNotice({
@@ -444,7 +460,7 @@ function App() {
   }, [client, repos, parentTeamSlug, subjectKind, teamPermissions])
 
   useEffect(() => {
-    if (!client || subjectKind !== 'user' || repos.length === 0 || usersLoaded) {
+    if (!client || subjectKind !== 'user' || repos.length === 0 || usersLoaded || connectLoadingCollaboratorsRef.current) {
       return
     }
 
