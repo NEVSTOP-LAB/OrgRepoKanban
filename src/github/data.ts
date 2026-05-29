@@ -8,6 +8,8 @@ export interface GithubRepo {
   id: number
   name: string
   full_name: string
+  private?: boolean
+  fork?: boolean
 }
 
 export interface GithubTeamParent {

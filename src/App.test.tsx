@@ -27,8 +27,20 @@ describe('App', () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([
-            { id: 1, name: 'repo-a', full_name: 'acme/repo-a' },
-            { id: 2, name: 'repo-b', full_name: 'acme/repo-b' },
+            {
+              id: 1,
+              name: 'repo-a',
+              full_name: 'acme/repo-a',
+              private: false,
+              fork: false,
+            },
+            {
+              id: 2,
+              name: 'repo-b',
+              full_name: 'acme/repo-b',
+              private: true,
+              fork: false,
+            },
           ]),
           {
             status: 200,
@@ -68,6 +80,94 @@ describe('App', () => {
 
     expect(screen.getByTestId('column-none')).toHaveTextContent('repo-b')
     expect(screen.getByLabelText('团队选择')).toHaveValue('platform')
+  })
+
+  it('filters repositories with preset buttons', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ role: 'admin' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 1,
+              name: 'repo-a',
+              full_name: 'acme/repo-a',
+              private: false,
+              fork: false,
+            },
+            {
+              id: 2,
+              name: 'repo-b',
+              full_name: 'acme/repo-b',
+              private: true,
+              fork: false,
+            },
+            {
+              id: 3,
+              name: 'repo-c',
+              full_name: 'acme/repo-c',
+              private: true,
+              fork: true,
+            },
+          ]),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([{ id: 10, slug: 'platform', name: 'Platform', parent: null }]),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { name: 'repo-a', role_name: 'push' },
+            { name: 'repo-b', role_name: 'pull' },
+            { name: 'repo-c', role_name: 'maintain' },
+          ]),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('个人访问令牌'), {
+      target: { value: 'token-value' },
+    })
+    fireEvent.change(screen.getByLabelText('组织名称'), {
+      target: { value: 'acme' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '仅 Public' }))
+
+    expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
+    expect(screen.getByTestId('column-pull')).not.toHaveTextContent('repo-b')
+    expect(screen.getByTestId('column-maintain')).not.toHaveTextContent('repo-c')
+
+    fireEvent.click(screen.getByRole('button', { name: '仅 Forked' }))
+
+    expect(screen.getByTestId('column-maintain')).toHaveTextContent('repo-c')
+    expect(screen.getByTestId('column-push')).not.toHaveTextContent('repo-a')
   })
 
   it('blocks non-admin token and shows warning', async () => {

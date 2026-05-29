@@ -5,6 +5,7 @@ import {
   applyOptimisticPermission,
   reconcileBatchResults,
 } from './domain/batch'
+import type { RepoFilterPreset } from './domain/board'
 import { toggleSelection } from './domain/selection'
 import {
   PERMISSION_DISPLAY_LABELS,
@@ -103,6 +104,13 @@ function buildBatchNotice(
   }
 }
 
+const REPO_FILTER_PRESETS: Array<{ key: RepoFilterPreset; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'public', label: '仅 Public' },
+  { key: 'private', label: '仅 Private' },
+  { key: 'forked', label: '仅 Forked' },
+]
+
 function App() {
   const [token, setToken] = useState('')
   const [org, setOrg] = useState('')
@@ -126,6 +134,7 @@ function App() {
   const [selectedTeam, setSelectedTeam] = useState('')
   const [selectedUser, setSelectedUser] = useState('')
   const [filterQuery, setFilterQuery] = useState('')
+  const [filterPreset, setFilterPreset] = useState<RepoFilterPreset>('all')
   const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<Notice | null>(null)
 
@@ -133,6 +142,8 @@ function App() {
     id: repo.id,
     name: repo.name,
     fullName: repo.full_name,
+    isPrivate: Boolean(repo.private),
+    isFork: Boolean(repo.fork),
   }))
 
   const emptyPermissionMap = buildEmptyPermissionMap(repos)
@@ -212,6 +223,7 @@ function App() {
     setNotice(null)
     setSelectedRepos(new Set())
     setFilterQuery('')
+    setFilterPreset('all')
     if (isRefresh) {
       setRefreshing(true)
     } else {
@@ -357,6 +369,10 @@ function App() {
   useEffect(() => {
     setSelectedRepos(new Set())
   }, [selectedTeam, selectedUser, subjectKind])
+
+  useEffect(() => {
+    setSelectedRepos(new Set())
+  }, [filterPreset, filterQuery])
 
   const handleMoveRequested = async (
     repoNames: string[],
@@ -615,6 +631,21 @@ function App() {
                     onChange={(event) => setFilterQuery(event.target.value)}
                   />
                 </div>
+
+                <div className="preset-filter-group" aria-label="仓库预置过滤">
+                  {REPO_FILTER_PRESETS.map((preset) => (
+                    <button
+                      key={preset.key}
+                      type="button"
+                      className={`ghost-button preset-filter-button ${
+                        filterPreset === preset.key ? 'active' : ''
+                      }`}
+                      onClick={() => setFilterPreset(preset.key)}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="toolbar-side">
@@ -641,6 +672,7 @@ function App() {
                 repos={repoCards}
                 permissionByRepo={currentPermissionMap}
                 filterQuery={filterQuery}
+                filterPreset={filterPreset}
                 selectedRepos={selectedRepos}
                 interactive={isAdmin === true && !isBusy}
                 onToggleSelect={(repoName, additive) => {

@@ -4,6 +4,7 @@ import {
   PERMISSION_DISPLAY_LABELS,
   type PermissionLevel,
 } from '../domain/permissions'
+import type { RepoFilterPreset } from '../domain/board'
 
 interface MovePayload {
   repoNames: string[]
@@ -13,6 +14,7 @@ export interface PermissionBoardProps {
   repos: RepoSummary[]
   permissionByRepo: Record<string, PermissionLevel>
   filterQuery: string
+  filterPreset?: RepoFilterPreset
   selectedRepos: Set<string>
   interactive?: boolean
   onToggleSelect: (repoName: string, additive: boolean) => void
@@ -43,20 +45,26 @@ export function PermissionBoard(props: PermissionBoardProps) {
     repos,
     permissionByRepo,
     filterQuery,
+    filterPreset = 'all',
     selectedRepos,
     interactive = true,
     onToggleSelect,
     onMoveRequested,
   } = props
 
-  const columns = buildBoardColumns(repos, permissionByRepo, filterQuery)
+  const columns = buildBoardColumns(repos, permissionByRepo, filterQuery, filterPreset)
+  const visibleRepoNames = new Set(
+    Object.values(columns)
+      .flat()
+      .map((repo) => repo.name),
+  )
 
   const onDragStart = (
     event: React.DragEvent<HTMLButtonElement>,
     repoName: string,
   ) => {
     const selectedGroup = selectedRepos.has(repoName)
-      ? Array.from(selectedRepos.values())
+      ? Array.from(selectedRepos.values()).filter((name) => visibleRepoNames.has(name))
       : [repoName]
 
     event.dataTransfer.setData(
