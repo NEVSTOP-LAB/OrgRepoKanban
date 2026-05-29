@@ -14,6 +14,7 @@ export interface RepoSummary {
 
 export type BoardColumns = Record<PermissionLevel, RepoSummary[]>
 export type RepoFilterPreset = 'all' | 'public' | 'private' | 'forked'
+export type InheritedFilter = 'all' | 'inherited-only' | 'direct-only'
 
 function matchesRepoPreset(repo: RepoSummary, preset: RepoFilterPreset): boolean {
   if (preset === 'all') {
@@ -29,6 +30,31 @@ function matchesRepoPreset(repo: RepoSummary, preset: RepoFilterPreset): boolean
   }
 
   return Boolean(repo.isFork)
+}
+
+function matchesInheritedFilter(
+  repoName: string,
+  inheritedFilter: InheritedFilter,
+  permissionByRepo: Record<string, PermissionLevel>,
+  parentPermissionByRepo: Record<string, PermissionLevel> | null,
+): boolean {
+  if (inheritedFilter === 'all' || !parentPermissionByRepo) {
+    return true
+  }
+
+  const currentPermission = permissionByRepo[repoName] ?? 'none'
+  const parentPermission = parentPermissionByRepo[repoName] ?? 'none'
+
+  // A repo is considered "inherited" if parent has the same or higher permission
+  // (meaning child team did not directly grant additional access)
+  const isInherited = parentPermission !== 'none' && parentPermission === currentPermission
+
+  if (inheritedFilter === 'inherited-only') {
+    return isInherited
+  }
+
+  // 'direct-only': show repos NOT inherited from parent
+  return !isInherited
 }
 
 export function searchRepoByName(name: string, query: string): boolean {
@@ -61,6 +87,8 @@ export function buildBoardColumns(
   permissionByRepo: Record<string, PermissionLevel>,
   query: string,
   preset: RepoFilterPreset,
+  inheritedFilter: InheritedFilter = 'all',
+  parentPermissionByRepo: Record<string, PermissionLevel> | null = null,
 ): BoardColumns {
   const columns: BoardColumns = {
     none: [],
@@ -77,6 +105,10 @@ export function buildBoardColumns(
     }
 
     if (!searchRepoByName(repo.name, query)) {
+      continue
+    }
+
+    if (!matchesInheritedFilter(repo.name, inheritedFilter, permissionByRepo, parentPermissionByRepo)) {
       continue
     }
 
