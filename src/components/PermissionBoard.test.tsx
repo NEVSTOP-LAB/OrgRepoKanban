@@ -29,8 +29,8 @@ function createDataTransfer(): DataTransfer {
 }
 
 const repos: RepoSummary[] = [
-  { id: 1, name: 'repo-a', fullName: 'acme/repo-a' },
-  { id: 2, name: 'repo-b', fullName: 'acme/repo-b' },
+  { id: 1, name: 'repo-a', fullName: 'acme/repo-a', url: 'https://github.com/acme/repo-a' },
+  { id: 2, name: 'repo-b', fullName: 'acme/repo-b', url: 'https://github.com/acme/repo-b' },
 ]
 
 const permissionByRepo: Record<string, PermissionLevel> = {

@@ -7,6 +7,7 @@ export interface RepoSummary {
   id: number
   name: string
   fullName: string
+  url: string
   isPrivate?: boolean
   isFork?: boolean
 }

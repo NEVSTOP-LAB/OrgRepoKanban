@@ -167,6 +167,7 @@ function App() {
     id: repo.id,
     name: repo.name,
     fullName: repo.full_name,
+    url: repo.html_url,
     isPrivate: Boolean(repo.private),
     isFork: Boolean(repo.fork),
   }))
