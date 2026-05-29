@@ -106,6 +106,15 @@ describe('App', () => {
         ),
       )
       .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([{ login: 'alice', id: 100 }]),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
         new Response(JSON.stringify([{ name: 'repo-a', role_name: 'push' }]), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -172,6 +181,15 @@ describe('App', () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([{ id: 10, slug: 'platform', name: 'Platform', parent: null }]),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([{ login: 'alice', id: 100 }]),
           {
             status: 200,
             headers: { 'content-type': 'application/json' },
@@ -275,6 +293,18 @@ describe('App', () => {
         )
       }
 
+      if (url.includes('/orgs/acme/members')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([{ login: 'alice', id: 100 }]),
+            {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            },
+          ),
+        )
+      }
+
       if (url.includes('/orgs/acme/teams/platform/repos?')) {
         return Promise.resolve(
           new Response(
@@ -318,18 +348,18 @@ describe('App', () => {
     dragRepoToColumn('repo-a', 'admin')
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(5)
+      expect(fetchMock).toHaveBeenCalledTimes(6)
     })
 
     dragRepoToColumn('repo-b', 'maintain')
 
     expect(confirmSpy).not.toHaveBeenCalled()
-    expect(fetchMock).toHaveBeenCalledTimes(5)
+    expect(fetchMock).toHaveBeenCalledTimes(6)
 
     firstWrite.resolve(new Response(null, { status: 204 }))
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(6)
+      expect(fetchMock).toHaveBeenCalledTimes(7)
     })
 
     secondWrite.resolve(new Response(null, { status: 204 }))
@@ -387,6 +417,15 @@ describe('App', () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify([{ login: 'alice', id: 100 }]),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify([
             { name: 'repo-a', role_name: 'push' },
             { name: 'repo-b', role_name: 'pull' },
@@ -422,12 +461,12 @@ describe('App', () => {
     dragRepoToColumn('repo-a', 'admin')
 
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledTimes(5)
 
     confirmSpy.mockRestore()
   })
 
-  it('reloads individual collaborators when refreshing while in user mode', async () => {
+  it('loads user permissions on-demand when switching to user mode', async () => {
     function makeAdminResponse() {
       return new Response(JSON.stringify({ role: 'admin' }), {
         status: 200,
@@ -451,6 +490,13 @@ describe('App', () => {
       )
     }
 
+    function makeMembersResponse() {
+      return new Response(
+        JSON.stringify([{ login: 'alice', id: 100 }]),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }
+
     function makeTeamReposResponse() {
       return new Response(JSON.stringify([{ name: 'repo-a', role_name: 'push' }]), {
         status: 200,
@@ -458,18 +504,19 @@ describe('App', () => {
       })
     }
 
-    function makeCollaboratorsResponse() {
+    function makeUserPermissionResponse(permission: string) {
       return new Response(
-        JSON.stringify([{ login: 'alice', permission: 'admin' }]),
+        JSON.stringify({ permission, role_name: permission }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
     }
 
-    // Initial connect: admin check, repos, teams, team repos
+    // Initial connect: admin check, repos, teams, members, team repos
     fetchMock
       .mockResolvedValueOnce(makeAdminResponse())
       .mockResolvedValueOnce(makeReposResponse())
       .mockResolvedValueOnce(makeTeamsResponse())
+      .mockResolvedValueOnce(makeMembersResponse())
       .mockResolvedValueOnce(makeTeamReposResponse())
 
     render(<App />)
@@ -482,8 +529,16 @@ describe('App', () => {
       expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
     })
 
-    // Switch to individual-collaborator mode; this triggers collaborator loading for repo-a
-    fetchMock.mockResolvedValueOnce(makeCollaboratorsResponse())
+    // Switch to user mode; this triggers loading user permissions for alice
+    // getUserRepoPermission for repo-a + listUserTeams (list teams then membership check)
+    fetchMock
+      .mockResolvedValueOnce(makeUserPermissionResponse('admin'))
+      .mockResolvedValueOnce(makeTeamsResponse()) // listUserTeams calls listTeams
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'active' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) // membership check for platform team
+      .mockResolvedValueOnce(makeTeamReposResponse()) // load platform team repos
 
     fireEvent.change(screen.getByLabelText('主体类型'), { target: { value: 'user' } })
 
@@ -491,23 +546,10 @@ describe('App', () => {
       expect(screen.getByLabelText('个人协作者')).toHaveValue('alice')
     })
 
-    expect(screen.getByTestId('column-admin')).toHaveTextContent('repo-a')
-
-    // Refresh: admin check, repos, teams, collaborators (because we're in user mode)
-    fetchMock
-      .mockResolvedValueOnce(makeAdminResponse())
-      .mockResolvedValueOnce(makeReposResponse())
-      .mockResolvedValueOnce(makeTeamsResponse())
-      .mockResolvedValueOnce(makeCollaboratorsResponse())
-
-    fireEvent.click(screen.getByRole('button', { name: '重新从 GitHub 加载' }))
-
     await waitFor(() => {
-      expect(screen.getByLabelText('个人协作者')).toHaveValue('alice')
+      expect(screen.getByTestId('column-admin')).toHaveTextContent('repo-a')
     })
 
-    // Should still show alice's admin permission on repo-a after refresh
-    expect(screen.getByTestId('column-admin')).toHaveTextContent('repo-a')
     // And the subject kind selector should still be on user mode
     expect(screen.getByLabelText('主体类型')).toHaveValue('user')
   })

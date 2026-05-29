@@ -87,4 +87,121 @@ describe('GithubClient', () => {
       message: 'Forbidden',
     })
   })
+
+  it('lists org members', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          { login: 'alice', id: 1 },
+          { login: 'bob', id: 2 },
+        ]),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    )
+
+    const client = new GithubClient('token-value', 'acme')
+    const members = await client.listOrgMembers()
+    expect(members.map((m) => m.login)).toEqual(['alice', 'bob'])
+    const [url] = fetchMock.mock.calls[0] ?? []
+    expect(url).toContain('/orgs/acme/members')
+  })
+
+  it('returns user repo permission preferring role_name over permission', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ permission: 'admin', role_name: 'maintain' }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    )
+
+    const client = new GithubClient('token-value', 'acme')
+    const level = await client.getUserRepoPermission('repo-a', 'alice')
+    expect(level).toBe('maintain')
+  })
+
+  it('falls back to permission field when role_name is absent', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ permission: 'push' }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    )
+
+    const client = new GithubClient('token-value', 'acme')
+    const level = await client.getUserRepoPermission('repo-a', 'alice')
+    expect(level).toBe('push')
+  })
+
+  it('lists teams the user is a member of, skipping 404s', async () => {
+    // First call: fetch all org teams
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          { id: 1, name: 'Team A', slug: 'team-a' },
+          { id: 2, name: 'Team B', slug: 'team-b' },
+          { id: 3, name: 'Team C', slug: 'team-c' },
+        ]),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    )
+    // team-a: user is a member (204)
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }))
+    // team-b: user is not a member (404)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ message: 'Not Found' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    // team-c: user is a member (200)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ state: 'active' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const client = new GithubClient('token-value', 'acme')
+    const teams = await client.listUserTeams('alice')
+    expect(teams).toEqual(expect.arrayContaining(['team-a', 'team-c']))
+    expect(teams).not.toContain('team-b')
+  })
+
+  it('rethrows non-404 errors from team membership check', async () => {
+    // First call: fetch all org teams
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([{ id: 1, name: 'Team A', slug: 'team-a' }]),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    )
+    // Membership check returns 403
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ message: 'Forbidden' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const client = new GithubClient('token-value', 'acme')
+    await expect(client.listUserTeams('alice')).rejects.toMatchObject({
+      status: 403,
+      message: 'Forbidden',
+    })
+  })
 })

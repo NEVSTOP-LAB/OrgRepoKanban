@@ -30,6 +30,11 @@ export interface GithubCollaborator {
   permission: string
 }
 
+export interface OrgMember {
+  login: string
+  id: number
+}
+
 export interface RepoPermission {
   repoName: string
   permission: PermissionLevel

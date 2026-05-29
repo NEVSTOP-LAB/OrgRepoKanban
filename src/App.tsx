@@ -9,18 +9,16 @@ import type { InheritedFilter, RepoFilterPreset } from './domain/board'
 import { toggleSelection } from './domain/selection'
 import {
   PERMISSION_DISPLAY_LABELS,
+  comparePermission,
   type PermissionLevel,
 } from './domain/permissions'
 import { PermissionBoard } from './components/PermissionBoard'
 import {
   buildTeamTreeOptions,
-  collectDirectCollaborators,
   flattenTeamTree,
   toPermissionMap,
-  type DirectCollaboratorSummary,
-  type GithubCollaborator,
   type GithubRepo,
-  type RepoPermission,
+  type OrgMember,
   type TeamFlatOption,
 } from './github/data'
 import { GithubClient } from './github/client'
@@ -54,26 +52,6 @@ function buildEmptyPermissionMap(repos: GithubRepo[]): Record<string, Permission
   }
 
   return map
-}
-
-function toUserPermissionMaps(
-  repos: GithubRepo[],
-  collaborators: DirectCollaboratorSummary[],
-): Record<string, Record<string, PermissionLevel>> {
-  const next: Record<string, Record<string, PermissionLevel>> = {}
-
-  for (const collaborator of collaborators) {
-    const entries: RepoPermission[] = Object.entries(collaborator.repos).map(
-      ([repoName, permission]) => ({
-        repoName,
-        permission,
-      }),
-    )
-
-    next[collaborator.login] = toPermissionMap(repos, entries)
-  }
-
-  return next
 }
 
 function formatTeamOption(option: TeamFlatOption): string {
@@ -152,9 +130,11 @@ function App() {
   const [teamPermissions, setTeamPermissions] = useState<
     Record<string, Record<string, PermissionLevel>>
   >({})
-  const [users, setUsers] = useState<DirectCollaboratorSummary[]>([])
-  const [usersLoaded, setUsersLoaded] = useState(false)
+  const [users, setUsers] = useState<OrgMember[]>([])
   const [userPermissions, setUserPermissions] = useState<
+    Record<string, Record<string, PermissionLevel>>
+  >({})
+  const [userTeamPermissions, setUserTeamPermissions] = useState<
     Record<string, Record<string, PermissionLevel>>
   >({})
   const [subjectKind, setSubjectKind] = useState<SubjectKind>('team')
@@ -169,9 +149,6 @@ function App() {
   const teamPermissionsRef = useRef<Record<string, Record<string, PermissionLevel>>>({})
   const userPermissionsRef = useRef<Record<string, Record<string, PermissionLevel>>>({})
   const queueChainRef = useRef<Promise<void>>(Promise.resolve())
-  // Tracks when connectOrganization is already loading collaborators so the
-  // useEffect below doesn't start a duplicate concurrent load.
-  const connectLoadingCollaboratorsRef = useRef(false)
 
   const repoCards = repos.map((repo) => ({
     id: repo.id,
@@ -193,7 +170,9 @@ function App() {
   const currentParentPermissionMap =
     subjectKind === 'team' && parentTeamSlug
       ? teamPermissions[parentTeamSlug] ?? null
-      : null
+      : subjectKind === 'user' && selectedUser
+        ? userTeamPermissions[selectedUser] ?? null
+        : null
 
   const hasConnectedData = repos.length > 0 && isAdmin === true
 
@@ -224,39 +203,63 @@ function App() {
     return userPermissionsRef.current[subject.key] ?? fallback
   }
 
-  const loadCollaborators = async (
+  const loadUserPermissions = async (
     activeClient: GithubClient,
     activeRepos: GithubRepo[],
-    nextSelectedUser = '',
+    userLogin: string,
   ) => {
+    if (!userLogin) return
     setSubjectLoading(true)
 
     try {
-      const collaboratorsByRepo: Record<string, GithubCollaborator[]> = {}
+      // Load effective permission per repo for this user
+      const permissionMap: Record<string, PermissionLevel> = {}
       for (const repo of activeRepos) {
-        collaboratorsByRepo[repo.name] = await activeClient.listRepoDirectCollaborators(repo.name)
+        try {
+          permissionMap[repo.name] = await activeClient.getUserRepoPermission(repo.name, userLogin)
+        } catch {
+          permissionMap[repo.name] = 'none'
+        }
       }
 
-      const summaries = collectDirectCollaborators(activeRepos, collaboratorsByRepo)
-      const permissionMaps = toUserPermissionMaps(activeRepos, summaries)
-      setUsers(summaries)
-      setUserPermissions(permissionMaps)
-      setUsersLoaded(true)
+      setUserPermissions((previous) => ({
+        ...previous,
+        [userLogin]: permissionMap,
+      }))
 
-      const fallbackUser = nextSelectedUser || summaries[0]?.login || ''
-      setSelectedUser(fallbackUser)
-      if (summaries.length === 0) {
-        setNotice({
-          tone: 'info',
-          title: '当前组织没有可管理的直接协作者。',
-          description: '只有至少被直接授权到一个仓库的用户才会出现在列表中。',
-        })
+      // Load team-inherited permissions for this user
+      const userTeams = await activeClient.listUserTeams(userLogin)
+      if (userTeams.length > 0) {
+        const teamPermMap: Record<string, PermissionLevel> = {}
+        for (const repo of activeRepos) {
+          teamPermMap[repo.name] = 'none'
+        }
+        for (const teamSlug of userTeams) {
+          const teamRepos = await activeClient.listTeamRepos(teamSlug)
+          const teamMap = toPermissionMap(activeRepos, teamRepos)
+          for (const repo of activeRepos) {
+            const teamPerm = teamMap[repo.name] ?? 'none'
+            const current = teamPermMap[repo.name] ?? 'none'
+            if (comparePermission(teamPerm, current) > 0) {
+              teamPermMap[repo.name] = teamPerm
+            }
+          }
+        }
+        setUserTeamPermissions((previous) => ({
+          ...previous,
+          [userLogin]: teamPermMap,
+        }))
+      } else {
+        setUserTeamPermissions((previous) => ({
+          ...previous,
+          [userLogin]: buildEmptyPermissionMap(activeRepos),
+        }))
       }
     } catch (error) {
       setNotice({
         tone: 'error',
-        title: '加载直接协作者失败。',
-        description: formatError(error, '无法从 GitHub 读取直接协作者信息。'),
+        title: '加载用户权限失败。',
+        description: formatError(error, '无法从 GitHub 读取用户权限信息。'),
       })
     } finally {
       setSubjectLoading(false)
@@ -298,8 +301,8 @@ function App() {
         setTeamOptions([])
         setTeamPermissions({})
         setUsers([])
-        setUsersLoaded(false)
         setUserPermissions({})
+        setUserTeamPermissions({})
         setSelectedTeam('')
         setSelectedUser('')
         setNotice({
@@ -310,9 +313,10 @@ function App() {
         return
       }
 
-      const [repoList, teams] = await Promise.all([
+      const [repoList, teams, members] = await Promise.all([
         nextClient.listOrgRepos(),
         nextClient.listTeams(),
+        nextClient.listOrgMembers(),
       ])
 
       const flattenedTeams = flattenTeamTree(buildTeamTreeOptions(teams))
@@ -328,10 +332,10 @@ function App() {
       setRepos(repoList)
       setTeamOptions(flattenedTeams)
       setTeamPermissions({})
-      setUsers([])
-      setUsersLoaded(false)
+      setUsers(members)
       setUserPermissions({})
-      setSelectedUser('')
+      setUserTeamPermissions({})
+      setSelectedUser(members[0]?.login ?? '')
       setSubjectKind(nextSubjectKind)
       setSelectedTeam(defaultTeam)
 
@@ -342,15 +346,6 @@ function App() {
           [defaultTeam]: toPermissionMap(repoList, teamRepoPermissions),
         })
         setSubjectLoading(false)
-      } else {
-        // Guard the ref before awaiting so the useEffect below skips its own
-        // loadCollaborators call while connectOrganization is already loading.
-        connectLoadingCollaboratorsRef.current = true
-        try {
-          await loadCollaborators(nextClient, repoList)
-        } finally {
-          connectLoadingCollaboratorsRef.current = false
-        }
       }
 
       setNotice({
@@ -364,8 +359,8 @@ function App() {
       setTeamOptions([])
       setTeamPermissions({})
       setUsers([])
-      setUsersLoaded(false)
       setUserPermissions({})
+      setUserTeamPermissions({})
       setSelectedTeam('')
       setSelectedUser('')
       setIsAdmin(null)
@@ -460,12 +455,17 @@ function App() {
   }, [client, repos, parentTeamSlug, subjectKind, teamPermissions])
 
   useEffect(() => {
-    if (!client || subjectKind !== 'user' || repos.length === 0 || usersLoaded || connectLoadingCollaboratorsRef.current) {
+    if (!client || subjectKind !== 'user' || repos.length === 0 || !selectedUser) {
       return
     }
 
-    void loadCollaborators(client, repos, selectedUser)
-  }, [client, repos, selectedUser, subjectKind, usersLoaded])
+    // Skip if already loaded
+    if (userPermissions[selectedUser]) {
+      return
+    }
+
+    void loadUserPermissions(client, repos, selectedUser)
+  }, [client, repos, selectedUser, subjectKind, userPermissions])
 
   useEffect(() => {
     setSelectedRepos(new Set())
@@ -690,7 +690,7 @@ function App() {
             <div className="badge-row">
               <span className="badge">仓库数：{repos.length}</span>
               <span className="badge">团队数：{teamOptions.length}</span>
-              <span className="badge">直接协作者数：{usersLoaded ? users.length : '待加载'}</span>
+              <span className="badge">组织成员数：{users.length}</span>
             </div>
 
             <div className="subject-grid" style={{ marginTop: '18px' }}>
@@ -702,7 +702,7 @@ function App() {
                   onChange={(event) => setSubjectKind(event.target.value as SubjectKind)}
                 >
                   <option value="team">团队</option>
-                  <option value="user">直接授权个人协作者</option>
+                  <option value="user">个人协作者</option>
                 </select>
               </div>
 
@@ -731,12 +731,9 @@ function App() {
                     id="user-select"
                     value={selectedUser}
                     onChange={(event) => setSelectedUser(event.target.value)}
-                    disabled={subjectLoading && !usersLoaded}
                   >
                     {users.length === 0 ? (
-                      <option value="">
-                        {usersLoaded ? '当前没有直接协作者' : '正在加载直接协作者'}
-                      </option>
+                      <option value="">当前组织没有成员</option>
                     ) : null}
                     {users.map((user) => (
                       <option key={user.login} value={user.login}>
@@ -789,7 +786,7 @@ function App() {
                   ))}
                 </div>
 
-                {subjectKind === 'team' && parentTeamSlug ? (
+                {(subjectKind === 'team' && parentTeamSlug) || (subjectKind === 'user' && selectedUser) ? (
                   <div className="preset-filter-group" aria-label="继承权限过滤">
                     {INHERITED_FILTER_PRESETS.map((preset) => (
                       <button
