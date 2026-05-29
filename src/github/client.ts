@@ -3,6 +3,7 @@ import type {
   GithubCollaborator,
   GithubRepo,
   GithubTeam,
+  OrgMember,
 } from './data'
 
 export interface HttpError extends Error {
@@ -24,6 +25,11 @@ interface TeamRepoResponse {
     maintain?: boolean
     admin?: boolean
   }
+  role_name?: string
+}
+
+interface UserRepoPermissionResponse {
+  permission?: string
   role_name?: string
 }
 
@@ -73,6 +79,37 @@ export class GithubClient {
     return this.paginate<GithubCollaborator[]>(
       `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/collaborators?affiliation=direct&per_page=100`,
     )
+  }
+
+  async listOrgMembers(): Promise<OrgMember[]> {
+    return this.paginate<OrgMember[]>(
+      `/orgs/${encodeURIComponent(this.org)}/members?per_page=100`,
+    )
+  }
+
+  async getUserRepoPermission(repoName: string, userLogin: string): Promise<PermissionLevel> {
+    const response = await this.request<UserRepoPermissionResponse>(
+      `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/collaborators/${encodeURIComponent(userLogin)}/permission`,
+    )
+    return normalizePermission(response.permission ?? 'none')
+  }
+
+  async listUserTeams(userLogin: string): Promise<string[]> {
+    const teams = await this.paginate<GithubTeam[]>(
+      `/orgs/${encodeURIComponent(this.org)}/teams?per_page=100`,
+    )
+    const userTeams: string[] = []
+    for (const team of teams) {
+      try {
+        await this.requestVoid(
+          `/orgs/${encodeURIComponent(this.org)}/teams/${encodeURIComponent(team.slug)}/memberships/${encodeURIComponent(userLogin)}`,
+        )
+        userTeams.push(team.slug)
+      } catch {
+        // 404 means user is not in this team, skip
+      }
+    }
+    return userTeams
   }
 
   async setTeamRepoPermission(
