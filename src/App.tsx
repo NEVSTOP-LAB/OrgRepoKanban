@@ -5,7 +5,7 @@ import {
   applyOptimisticPermission,
   reconcileBatchResults,
 } from './domain/batch'
-import type { RepoFilterPreset } from './domain/board'
+import type { InheritedFilter, RepoFilterPreset } from './domain/board'
 import { toggleSelection } from './domain/selection'
 import {
   PERMISSION_DISPLAY_LABELS,
@@ -132,6 +132,12 @@ const REPO_FILTER_PRESETS: Array<{ key: RepoFilterPreset; label: string }> = [
   { key: 'forked', label: '仅 Forked' },
 ]
 
+const INHERITED_FILTER_PRESETS: Array<{ key: InheritedFilter; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'inherited-only', label: '仅继承' },
+  { key: 'direct-only', label: '仅直接授权' },
+]
+
 function App() {
   const [token, setToken] = useState('')
   const [org, setOrg] = useState('')
@@ -156,6 +162,7 @@ function App() {
   const [selectedUser, setSelectedUser] = useState('')
   const [filterQuery, setFilterQuery] = useState('')
   const [filterPreset, setFilterPreset] = useState<RepoFilterPreset>('all')
+  const [inheritedFilter, setInheritedFilter] = useState<InheritedFilter>('all')
   const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<Notice | null>(null)
   const reposRef = useRef<GithubRepo[]>([])
@@ -176,6 +183,13 @@ function App() {
     subjectKind === 'team'
       ? teamPermissions[selectedTeam] ?? emptyPermissionMap
       : userPermissions[selectedUser] ?? emptyPermissionMap
+
+  const selectedTeamOption = teamOptions.find((opt) => opt.team.slug === selectedTeam)
+  const parentTeamSlug = selectedTeamOption?.team.parent?.slug ?? null
+  const currentParentPermissionMap =
+    subjectKind === 'team' && parentTeamSlug
+      ? teamPermissions[parentTeamSlug] ?? null
+      : null
 
   const hasConnectedData = repos.length > 0 && isAdmin === true
 
@@ -261,6 +275,7 @@ function App() {
     setSelectedRepos(new Set())
     setFilterQuery('')
     setFilterPreset('all')
+    setInheritedFilter('all')
     if (isRefresh) {
       setRefreshing(true)
     } else {
@@ -396,6 +411,38 @@ function App() {
   }, [client, repos, selectedTeam, subjectKind, teamPermissions])
 
   useEffect(() => {
+    if (!client || subjectKind !== 'team' || !parentTeamSlug || repos.length === 0) {
+      return
+    }
+
+    if (teamPermissions[parentTeamSlug]) {
+      return
+    }
+
+    let cancelled = false
+
+    void client
+      .listTeamRepos(parentTeamSlug)
+      .then((entries) => {
+        if (cancelled) {
+          return
+        }
+
+        setTeamPermissions((previous) => ({
+          ...previous,
+          [parentTeamSlug]: toPermissionMap(repos, entries),
+        }))
+      })
+      .catch(() => {
+        // Silently skip parent permission load failure
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [client, repos, parentTeamSlug, subjectKind, teamPermissions])
+
+  useEffect(() => {
     if (!client || subjectKind !== 'user' || repos.length === 0 || usersLoaded) {
       return
     }
@@ -409,7 +456,7 @@ function App() {
 
   useEffect(() => {
     setSelectedRepos(new Set())
-  }, [filterPreset, filterQuery])
+  }, [filterPreset, filterQuery, inheritedFilter])
 
   useEffect(() => {
     reposRef.current = repos
@@ -724,6 +771,23 @@ function App() {
                     </button>
                   ))}
                 </div>
+
+                {subjectKind === 'team' && parentTeamSlug ? (
+                  <div className="preset-filter-group" aria-label="继承权限过滤">
+                    {INHERITED_FILTER_PRESETS.map((preset) => (
+                      <button
+                        key={preset.key}
+                        type="button"
+                        className={`ghost-button preset-filter-button ${
+                          inheritedFilter === preset.key ? 'active' : ''
+                        }`}
+                        onClick={() => setInheritedFilter(preset.key)}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className="toolbar-side">
@@ -751,6 +815,8 @@ function App() {
                 permissionByRepo={currentPermissionMap}
                 filterQuery={filterQuery}
                 filterPreset={filterPreset}
+                inheritedFilter={inheritedFilter}
+                parentPermissionByRepo={currentParentPermissionMap}
                 selectedRepos={selectedRepos}
                 interactive={isAdmin === true && !isBusy}
                 onToggleSelect={(repoName, additive) => {
