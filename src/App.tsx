@@ -162,6 +162,9 @@ function App() {
   const teamPermissionsRef = useRef<Record<string, Record<string, PermissionLevel>>>({})
   const userPermissionsRef = useRef<Record<string, Record<string, PermissionLevel>>>({})
   const queueChainRef = useRef<Promise<void>>(Promise.resolve())
+  // Tracks when connectOrganization is already loading collaborators so the
+  // useEffect below doesn't start a duplicate concurrent load.
+  const connectLoadingCollaboratorsRef = useRef(false)
 
   const repoCards = repos.map((repo) => ({
     id: repo.id,
@@ -324,7 +327,14 @@ function App() {
         })
         setSubjectLoading(false)
       } else {
-        await loadCollaborators(nextClient, repoList)
+        // Guard the ref before awaiting so the useEffect below skips its own
+        // loadCollaborators call while connectOrganization is already loading.
+        connectLoadingCollaboratorsRef.current = true
+        try {
+          await loadCollaborators(nextClient, repoList)
+        } finally {
+          connectLoadingCollaboratorsRef.current = false
+        }
       }
 
       setNotice({
@@ -402,7 +412,7 @@ function App() {
   }, [client, repos, selectedTeam, subjectKind, teamPermissions])
 
   useEffect(() => {
-    if (!client || subjectKind !== 'user' || repos.length === 0 || usersLoaded) {
+    if (!client || subjectKind !== 'user' || repos.length === 0 || usersLoaded || connectLoadingCollaboratorsRef.current) {
       return
     }
 
