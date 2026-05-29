@@ -1,73 +1,119 @@
-# React + TypeScript + Vite
+# GitHub 组织仓库权限管理工具
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+这是一个基于 React + TypeScript + Vite 的前端单页应用，面向 GitHub 组织管理员，提供“看板式拖拽”界面来管理仓库对团队或直接授权个人协作者的权限。
 
-Currently, two official plugins are available:
+## 功能概览
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- 输入 GitHub 个人访问令牌和组织名称，校验当前令牌是否是该组织管理员。
+- 支持团队与直接授权个人协作者两类主体。
+- 团队按父子层级展示，可直接管理父团队或子团队。
+- 直接协作者仅展示至少被一个仓库直接授权的用户。
+- 看板按权限列展示仓库：`pull`、`triage`、`push`、`maintain`、`admin`、`未授权`。
+- 每个仓库只会显示在该主体的最高有效权限列。
+- 支持仓库名实时过滤，支持包含与模糊匹配。
+- 支持 Ctrl 或 Cmd 多选卡片，并批量拖拽修改权限。
+- 批量修改前会弹出确认框，执行后会展示成功/失败清单，并按真实结果回滚失败项。
+- 支持重新从 GitHub 拉取数据刷新当前看板。
 
-## React Compiler
+## 安全策略
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- PAT 与组织名称只保存在当前页面内存中。
+- 不会写入 `localStorage`、`sessionStorage`、`cookie` 或任何浏览器持久化存储。
+- 页面刷新后，令牌和组织名称会失效，需要重新输入。
 
-## Expanding the ESLint configuration
+## 令牌权限要求
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+建议使用具备以下权限的 GitHub 个人访问令牌：
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- `admin:org`
+- `repo`
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+如果当前令牌不是目标组织管理员，页面会明确提示，并阻止任何权限修改操作。
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 本地开发
+
+### 安装依赖
+
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 启动开发环境
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
+
+默认开发地址由 Vite 提供，通常为 `http://localhost:5173`。
+
+### 运行测试
+
+```bash
+npm test
+```
+
+### 生成生产构建
+
+```bash
+npm run build
+```
+
+## 交互说明
+
+### 认证与加载
+
+1. 输入 PAT 和组织名称。
+2. 点击“连接组织”。
+3. 管理员校验通过后，系统会加载仓库、团队以及对应权限数据。
+
+### 主体切换
+
+1. 可在“团队”和“直接授权个人协作者”之间切换。
+2. 团队列表会按层级缩进显示。
+3. 个人协作者列表会在首次切换到该模式时按仓库聚合加载。
+
+### 看板拖拽
+
+1. 单击卡片可选中当前仓库。
+2. 按住 Ctrl 或 Cmd 再点击，可追加或取消多选。
+3. 拖拽到目标权限列后，会先弹出确认框。
+4. 拖到“未授权”列表示移除该主体对仓库的权限。
+
+### 过滤
+
+1. 输入仓库关键字后，看板会实时过滤。
+2. 支持不区分大小写的包含匹配，也支持按字符顺序的模糊匹配。
+3. 点击“清空过滤”可以恢复完整视图。
+
+## 自动化验证
+
+当前仓库包含以下验证方式：
+
+- `npm test`：运行 Vitest 测试。
+- `npm run build`：执行 TypeScript 构建与 Vite 生产打包。
+
+## Docker 部署
+
+仓库已包含 `Dockerfile`、`.dockerignore` 与 `nginx.conf`，可直接构建镜像并部署。
+
+### 构建镜像
+
+```bash
+docker build -t org-repo-kanban:latest .
+```
+
+### 运行容器
+
+```bash
+docker run --rm -p 8080:80 org-repo-kanban:latest
+```
+
+启动后可通过 `http://localhost:8080` 访问。
+
+## 技术说明
+
+- 前端框架：React 19
+- 构建工具：Vite 8
+- 语言：TypeScript
+- 测试：Vitest + Testing Library
+- 部署形态：静态文件，由 Nginx 提供服务
