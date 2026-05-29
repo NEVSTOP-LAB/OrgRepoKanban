@@ -299,6 +299,12 @@ function App() {
       const flattenedTeams = flattenTeamTree(buildTeamTreeOptions(teams))
       const defaultTeam = flattenedTeams[0]?.team.slug ?? ''
 
+      // On refresh, preserve the user's current view; on initial connect, default to
+      // team mode when teams exist. If teams disappeared, force back to user mode.
+      const nextSubjectKind = defaultTeam
+        ? (isRefresh ? subjectKind : 'team')
+        : 'user'
+
       setClient(nextClient)
       setRepos(repoList)
       setTeamOptions(flattenedTeams)
@@ -307,10 +313,10 @@ function App() {
       setUsersLoaded(false)
       setUserPermissions({})
       setSelectedUser('')
-      setSubjectKind(defaultTeam ? 'team' : 'user')
+      setSubjectKind(nextSubjectKind)
       setSelectedTeam(defaultTeam)
 
-      if (defaultTeam) {
+      if (nextSubjectKind === 'team' && defaultTeam) {
         setSubjectLoading(true)
         const teamRepoPermissions = await nextClient.listTeamRepos(defaultTeam)
         setTeamPermissions({
