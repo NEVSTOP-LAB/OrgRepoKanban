@@ -4,7 +4,7 @@ import {
   PERMISSION_DISPLAY_LABELS,
   type PermissionLevel,
 } from '../domain/permissions'
-import type { RepoFilterPreset } from '../domain/board'
+import type { InheritedFilter, RepoFilterPreset } from '../domain/board'
 
 interface MovePayload {
   repoNames: string[]
@@ -15,6 +15,8 @@ export interface PermissionBoardProps {
   permissionByRepo: Record<string, PermissionLevel>
   filterQuery: string
   filterPreset?: RepoFilterPreset
+  inheritedFilter?: InheritedFilter
+  parentPermissionByRepo?: Record<string, PermissionLevel> | null
   selectedRepos: Set<string>
   interactive?: boolean
   onToggleSelect: (repoName: string, additive: boolean) => void
@@ -46,13 +48,15 @@ export function PermissionBoard(props: PermissionBoardProps) {
     permissionByRepo,
     filterQuery,
     filterPreset = 'all',
+    inheritedFilter = 'all',
+    parentPermissionByRepo = null,
     selectedRepos,
     interactive = true,
     onToggleSelect,
     onMoveRequested,
   } = props
 
-  const columns = buildBoardColumns(repos, permissionByRepo, filterQuery, filterPreset)
+  const columns = buildBoardColumns(repos, permissionByRepo, filterQuery, filterPreset, inheritedFilter, parentPermissionByRepo)
   const visibleRepoNames = new Set(
     Object.values(columns)
       .flat()
@@ -136,7 +140,17 @@ export function PermissionBoard(props: PermissionBoardProps) {
                   }}
                   aria-label={repo.name}
                 >
-                  {repo.name}
+                  <span className="repo-card-name">{repo.name}</span>
+                  <a
+                    className="repo-card-link"
+                    href={repo.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`在 GitHub 中打开 ${repo.name}`}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    ↗
+                  </a>
                 </button>
               )
             })}

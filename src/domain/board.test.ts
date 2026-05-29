@@ -13,6 +13,7 @@ const repos: RepoSummary[] = [
     id: 1,
     name: 'backend-gateway',
     fullName: 'acme/backend-gateway',
+    url: 'https://github.com/acme/backend-gateway',
     isPrivate: false,
     isFork: false,
   },
@@ -20,6 +21,7 @@ const repos: RepoSummary[] = [
     id: 2,
     name: 'client-portal',
     fullName: 'acme/client-portal',
+    url: 'https://github.com/acme/client-portal',
     isPrivate: true,
     isFork: false,
   },
@@ -27,6 +29,7 @@ const repos: RepoSummary[] = [
     id: 3,
     name: 'infra-ops',
     fullName: 'acme/infra-ops',
+    url: 'https://github.com/acme/infra-ops',
     isPrivate: true,
     isFork: true,
   },
@@ -76,5 +79,68 @@ describe('searchRepoByName', () => {
   it('supports fuzzy subsequence matching', () => {
     expect(searchRepoByName('backend-gateway', 'bdgt')).toBe(true)
     expect(searchRepoByName('backend-gateway', 'bxx')).toBe(false)
+  })
+})
+
+describe('buildBoardColumns with inheritedFilter', () => {
+  const testRepos: RepoSummary[] = [
+    { id: 1, name: 'repo-a', fullName: 'org/repo-a', isPrivate: false },
+    { id: 2, name: 'repo-b', fullName: 'org/repo-b', isPrivate: true },
+    { id: 3, name: 'repo-c', fullName: 'org/repo-c', isPrivate: false },
+    { id: 4, name: 'repo-d', fullName: 'org/repo-d', isPrivate: false },
+  ]
+
+  const childPermissions: Record<string, PermissionLevel> = {
+    'repo-a': 'push',
+    'repo-b': 'push',
+    'repo-c': 'admin',
+    'repo-d': 'none',
+  }
+
+  const parentPermissions: Record<string, PermissionLevel> = {
+    'repo-a': 'push',   // same as child -> inherited
+    'repo-b': 'pull',   // lower than child -> child has direct grant
+    'repo-c': 'none',   // parent has none -> child directly granted
+    'repo-d': 'none',   // both none -> not inherited
+  }
+
+  it('shows all repos when inheritedFilter is all', () => {
+    const board = buildBoardColumns(testRepos, childPermissions, '', 'all', 'all', parentPermissions)
+    const names = Object.values(board).flat().map((r) => r.name).sort()
+    expect(names).toEqual(['repo-a', 'repo-b', 'repo-c', 'repo-d'])
+  })
+
+  it('shows only inherited repos when inheritedFilter is inherited-only', () => {
+    const board = buildBoardColumns(testRepos, childPermissions, '', 'all', 'inherited-only', parentPermissions)
+    const names = Object.values(board).flat().map((r) => r.name).sort()
+    // Only repo-a is inherited (parent push == child push)
+    expect(names).toEqual(['repo-a'])
+  })
+
+  it('shows only directly-assigned repos when inheritedFilter is direct-only', () => {
+    const board = buildBoardColumns(testRepos, childPermissions, '', 'all', 'direct-only', parentPermissions)
+    const names = Object.values(board).flat().map((r) => r.name).sort()
+    // repo-b (child push > parent pull), repo-c (child admin, parent none), repo-d (both none, not inherited)
+    expect(names).toEqual(['repo-b', 'repo-c', 'repo-d'])
+  })
+
+  it('stacks inherited filter with preset filter', () => {
+    const board = buildBoardColumns(testRepos, childPermissions, '', 'private', 'direct-only', parentPermissions)
+    const names = Object.values(board).flat().map((r) => r.name).sort()
+    // repo-b is private AND direct-only
+    expect(names).toEqual(['repo-b'])
+  })
+
+  it('stacks inherited filter with search query', () => {
+    const board = buildBoardColumns(testRepos, childPermissions, 'repo-a', 'all', 'inherited-only', parentPermissions)
+    const names = Object.values(board).flat().map((r) => r.name).sort()
+    expect(names).toEqual(['repo-a'])
+  })
+
+  it('treats all repos as non-inherited when parentPermissionByRepo is null', () => {
+    const board = buildBoardColumns(testRepos, childPermissions, '', 'all', 'inherited-only', null)
+    const names = Object.values(board).flat().map((r) => r.name).sort()
+    // null parent means filter passes everything (shows all)
+    expect(names).toEqual(['repo-a', 'repo-b', 'repo-c', 'repo-d'])
   })
 })
