@@ -1,17 +1,20 @@
 :root {
-  --page: #f5efe4;
-  --page-deep: #efe3cf;
-  --ink: #1c2933;
-  --ink-soft: #52606d;
-  --ink-muted: #6b7784;
-  --line: rgba(28, 41, 51, 0.12);
-  --card: rgba(255, 251, 244, 0.94);
+  --page: #fbfbfd;
+  --page-deep: #f4f6fb;
+  --ink: #1a1f36;
+  --ink-soft: #4e5a6e;
+  --ink-muted: #6c7a8a;
+  --line: rgba(0, 0, 0, 0.06);
+  --card: rgba(255, 255, 255, 0.96);
+  --accent: #0d6efd;
+  --accent-secondary: #6610f2;
+  --accent-gradient: linear-gradient(90deg, #0d6efd 0%, #6610f2 100%);
   color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-family: 'IBM Plex Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   line-height: 1.5;
   font-weight: 400;
   color: var(--ink);
@@ -24,8 +27,8 @@
 
 html {
   background:
-    radial-gradient(circle at top left, rgba(255, 122, 69, 0.2), transparent 28%),
-    radial-gradient(circle at bottom right, rgba(44, 154, 142, 0.16), transparent 25%),
+    radial-gradient(circle at top left, rgba(13, 110, 253, 0.06), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(102, 16, 242, 0.05), transparent 25%),
     linear-gradient(180deg, var(--page) 0%, var(--page-deep) 100%);
 }
 
@@ -55,7 +58,7 @@ p {
 h1,
 h2,
 h3 {
-  font-family: 'Space Grotesk', 'IBM Plex Sans', 'Noto Sans SC', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
 }
 
 h1 {
