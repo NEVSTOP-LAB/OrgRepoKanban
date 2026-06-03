@@ -605,10 +605,10 @@ function App() {
     <main className="app-shell">
       <section className="hero-panel">
         <div className="hero-copy">
-          <span className="eyebrow">GitHub 组织仓库权限看板</span>
+          <span className="eyebrow">组织仓库权限看板</span>
           <h1>把权限调整，拖进一个看板里。</h1>
           <p>
-            选择团队或直接授权个人后，所有仓库只会出现在其最高有效权限列。支持实时过滤、Ctrl/Cmd 多选与批量拖拽修改。
+            选择团队或协作者后，仓库按最高有效权限分列展示。支持过滤、Ctrl/Cmd 多选与批量拖拽。
           </p>
           <div className="badge-row">
             <span className="badge">仅限组织管理员写入</span>
@@ -620,7 +620,7 @@ function App() {
         <div className="hero-meta">
           <div className="meta-card">
             <strong>凭据策略</strong>
-            <span>PAT 与组织名仅保存在当前页面内存中，不会写入本地存储。</span>
+            <span>PAT 与组织名仅存内存中，可由浏览器密码管理器保存。</span>
           </div>
           <div className="meta-card">
             <strong>令牌权限</strong>
@@ -634,89 +634,67 @@ function App() {
       </section>
 
       <section className="control-panel">
-        <div className="section-title">
-          <div>
-            <h2>认证与主体</h2>
-            <p>本页不会保存 PAT 与组织名称，刷新页面后需重新输入。</p>
-          </div>
-        </div>
-
-        <div className="connect-grid">
-          <div className="field">
-            <label htmlFor="token-input">个人访问令牌</label>
-            <input
-              id="token-input"
-              aria-label="个人访问令牌"
-              type="password"
-              value={token}
-              autoComplete="off"
-              placeholder="ghp_xxx"
-              onChange={(event) => setToken(event.target.value)}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="org-input">组织名称</label>
-            <input
-              id="org-input"
-              aria-label="组织名称"
-              type="text"
-              value={org}
-              autoComplete="off"
-              placeholder="your-org"
-              onChange={(event) => setOrg(event.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="action-row">
-          <button
-            type="button"
-            className="primary-button"
-            disabled={connecting || writing}
-            onClick={() => {
-              void connectOrganization(false)
-            }}
-          >
-            {connecting ? '连接中...' : '连接组织'}
-          </button>
-
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={!client || refreshing || writing}
-            onClick={() => {
-              void connectOrganization(true)
-            }}
-          >
-            {refreshing ? '刷新中...' : '重新从 GitHub 加载'}
-          </button>
-
-          {isAdmin === false ? (
-            <span className="readonly-tip">当前令牌无管理员权限，已阻止写操作。</span>
-          ) : null}
-        </div>
-
-        {notice ? (
-          <div className={`status-banner ${notice.tone}`} role="status">
-            <strong>{notice.title}</strong>
-            {notice.description ? <span>{notice.description}</span> : null}
-          </div>
-        ) : null}
-
-        {hasConnectedData ? (
+        {!hasConnectedData ? (
           <>
-            <div className="badge-row">
-              <span className="badge">仓库数：{repos.length}</span>
-              <span className="badge">团队数：{teamOptions.length}</span>
-              <span className="badge">组织成员数：{users.length}</span>
+            <div className="section-title">
+              <h2>认证与主体</h2>
             </div>
 
-            <div className="subject-grid" style={{ marginTop: '18px' }}>
-              <div className="field">
-                <label htmlFor="subject-kind">主体类型</label>
+            <div className="connect-row">
+              <div className="field connect-field">
+                <label htmlFor="org-input">组织</label>
+                <input
+                  id="org-input"
+                  aria-label="组织名称"
+                  name="username"
+                  type="text"
+                  value={org}
+                  autoComplete="username"
+                  placeholder="your-org"
+                  onChange={(event) => setOrg(event.target.value)}
+                />
+              </div>
+
+              <div className="field connect-field">
+                <label htmlFor="token-input">令牌</label>
+                <input
+                  id="token-input"
+                  aria-label="个人访问令牌"
+                  name="current-password"
+                  type="password"
+                  value={token}
+                  autoComplete="current-password"
+                  placeholder="ghp_xxx"
+                  onChange={(event) => setToken(event.target.value)}
+                />
+              </div>
+
+              <button
+                type="button"
+                className="primary-button"
+                disabled={connecting || writing}
+                onClick={() => { void connectOrganization(false) }}
+              >
+                {connecting ? '连接中...' : '连接组织'}
+              </button>
+            </div>
+
+            {notice ? (
+              <div className={`status-banner ${notice.tone}`} role="status">
+                <strong>{notice.title}</strong>
+                {notice.description ? <span>{notice.description}</span> : null}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <div className="connected-bar">
+              <span className="org-label">{org}</span>
+
+              <div className="field inline-field">
                 <select
                   id="subject-kind"
+                  aria-label="主体类型"
                   value={subjectKind}
                   onChange={(event) => setSubjectKind(event.target.value as SubjectKind)}
                 >
@@ -726,15 +704,15 @@ function App() {
               </div>
 
               {subjectKind === 'team' ? (
-                <div className="field">
-                  <label htmlFor="team-select">团队选择</label>
+                <div className="field inline-field">
                   <select
                     id="team-select"
+                    aria-label="团队选择"
                     value={selectedTeam}
                     onChange={(event) => setSelectedTeam(event.target.value)}
                   >
                     {teamOptions.length === 0 ? (
-                      <option value="">当前组织没有团队</option>
+                      <option value="">无团队</option>
                     ) : null}
                     {teamOptions.map((option) => (
                       <option key={option.team.id} value={option.team.slug}>
@@ -744,15 +722,15 @@ function App() {
                   </select>
                 </div>
               ) : (
-                <div className="field">
-                  <label htmlFor="user-select">个人协作者</label>
+                <div className="field inline-field">
                   <select
                     id="user-select"
+                    aria-label="个人协作者"
                     value={selectedUser}
                     onChange={(event) => setSelectedUser(event.target.value)}
                   >
                     {users.length === 0 ? (
-                      <option value="">当前组织没有成员</option>
+                      <option value="">无成员</option>
                     ) : null}
                     {users.map((user) => (
                       <option key={user.login} value={user.login}>
@@ -762,30 +740,51 @@ function App() {
                   </select>
                 </div>
               )}
+
+              <span className="stat-badge">仓库 {repos.length}</span>
+              <span className="stat-badge">团队 {teamOptions.length}</span>
+              <span className="stat-badge">成员 {users.length}</span>
+
+              <div className="connected-actions">
+                <button
+                  type="button"
+                  className="ghost-button"
+                  disabled={refreshing || writing}
+                  onClick={() => { void connectOrganization(true) }}
+                >
+                  {refreshing ? '刷新中...' : '刷新'}
+                </button>
+
+                {isAdmin === false ? (
+                  <span className="readonly-tip">无管理员权限</span>
+                ) : null}
+              </div>
             </div>
+
+            {notice ? (
+              <div className={`status-banner ${notice.tone}`} role="status">
+                <strong>{notice.title}</strong>
+                {notice.description ? <span>{notice.description}</span> : null}
+              </div>
+            ) : null}
           </>
-        ) : null}
+        )}
       </section>
 
       <section className="board-panel">
-        <div className="section-title">
-          <div>
-            <h2>权限看板</h2>
-            <p>卡片只显示在最高有效权限列。拖到“未授权”会移除权限。</p>
-          </div>
-        </div>
-
         {hasConnectedData ? (
           <>
-            <div className="toolbar">
-              <div className="toolbar-main">
+            <div className="board-toolbar">
+              <h2>权限看板</h2>
+              <div className="toolbar-right">
+                <div className="toolbar-main">
                 <div className="field toolbar-search">
-                  <label htmlFor="repo-filter">按仓库名称过滤</label>
                   <input
                     id="repo-filter"
+                    aria-label="按仓库名称过滤"
                     type="text"
                     value={filterQuery}
-                    placeholder="支持包含或模糊匹配"
+                    placeholder="按仓库名称过滤..."
                     onChange={(event) => setFilterQuery(event.target.value)}
                   />
                 </div>
@@ -835,6 +834,7 @@ function App() {
                 <span className="badge">已选卡片：{selectedRepos.size}</span>
                 <span className="badge">写入状态：{writing ? '提交中' : '空闲'}</span>
               </div>
+              </div>
             </div>
 
             {subjectLoading ? (
@@ -883,8 +883,8 @@ function App() {
           </>
         ) : (
           <div className="empty-state">
-            <strong>先完成组织连接，再开始拖拽管理权限。</strong>
-            <span>只有组织管理员令牌会进入可用状态。</span>
+            <strong>先完成组织连接，再拖拽管理权限。</strong>
+            <span>仅组织管理员令牌可用。</span>
           </div>
         )}
       </section>
@@ -893,7 +893,7 @@ function App() {
         <div className="section-title">
           <div>
             <h2>执行结果</h2>
-            <p>批量变更发生部分失败时，这里会列出成功与失败的仓库名单。</p>
+            <p>批量变更结果，列出成功与失败的仓库。</p>
           </div>
         </div>
 
