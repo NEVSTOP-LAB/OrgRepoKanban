@@ -125,7 +125,13 @@ function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [subjectLoading, setSubjectLoading] = useState(false)
   const [loadingProgress, setLoadingProgress] = useState<{ completed: number; total: number } | null>(null)
-  const [writing, setWriting] = useState(false)
+  const [activeOps, setActiveOps] = useState({ reads: 0, writes: 0 })
+  const writing = activeOps.writes > 0
+
+  const addReadOp = () => setActiveOps((prev) => ({ ...prev, reads: prev.reads + 1 }))
+  const removeReadOp = () => setActiveOps((prev) => ({ ...prev, reads: Math.max(0, prev.reads - 1) }))
+  const addWriteOp = () => setActiveOps((prev) => ({ ...prev, writes: prev.writes + 1 }))
+  const removeWriteOp = () => setActiveOps((prev) => ({ ...prev, writes: Math.max(0, prev.writes - 1) }))
   const [repos, setRepos] = useState<GithubRepo[]>([])
   const [teamOptions, setTeamOptions] = useState<TeamFlatOption[]>([])
   const [teamPermissions, setTeamPermissions] = useState<
@@ -161,6 +167,60 @@ function App() {
     topics: repo.topics ?? [],
     accessList: repo.accessList ?? [],
   }))
+
+  // Progressive background loader: fetches topics + access lists and updates state per-repo
+  async function loadRepoTags(activeClient: GithubClient, repoList: GithubRepo[]) {
+    const CONCURRENCY = 8
+    const queue = [...repoList]
+    const results = new Map<number, { topics: string[]; accessList: typeof repoList[0]['accessList'] }>()
+    setActiveOps((prev) => ({ ...prev, reads: prev.reads + repoList.length }))
+
+    const worker = async () => {
+      while (queue.length > 0) {
+        const repo = queue.shift()!
+        try {
+          const [topics, accessList] = await Promise.all([
+            activeClient.getRepoTopics(repo.name),
+            activeClient.getRepoAccessList(repo.name),
+          ])
+          results.set(repo.id, { topics, accessList })
+        } catch {
+          results.set(repo.id, { topics: [], accessList: [] })
+        }
+
+        removeReadOp()
+        setRepos((prev) =>
+          prev.map((r) => {
+            const done = results.get(r.id)
+            if (done) {
+              return { ...r, topics: done.topics, accessList: done.accessList }
+            }
+            return r
+          }),
+        )
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, repoList.length) }, () => worker()))
+  }
+
+  // Refresh access tags for specific repos (called after permission changes)
+  async function refreshRepoTags(activeClient: GithubClient, repoNames: string[]) {
+    const nameSet = new Set(repoNames)
+    for (const repoName of repoNames) {
+      addReadOp()
+      try {
+        const accessList = await activeClient.getRepoAccessList(repoName)
+        setRepos((prev) =>
+          prev.map((r) => (r.name === repoName ? { ...r, accessList } : r)),
+        )
+      } catch {
+        // keep existing tags on failure
+      } finally {
+        removeReadOp()
+      }
+    }
+  }
 
   const emptyPermissionMap = buildEmptyPermissionMap(repos)
   const currentPermissionMap =
@@ -214,6 +274,7 @@ function App() {
     if (!userLogin) return
     setSubjectLoading(true)
     setLoadingProgress({ completed: 0, total: activeRepos.length })
+    setActiveOps((prev) => ({ ...prev, reads: prev.reads + activeRepos.length }))
 
     try {
       // 并发加载每个仓库的用户权限（限制并发数避免触发 API 限流）
@@ -231,6 +292,7 @@ function App() {
             permissionMap[repo.name] = 'none'
           }
           completed++
+          removeReadOp()
           setLoadingProgress({ completed, total: activeRepos.length })
         }
       }
@@ -370,7 +432,6 @@ function App() {
 
       // Start progressive tag loading in background – don't await
       void loadRepoTags(nextClient, repoList)
-      }
 
       setNotice({
         tone: 'success',
@@ -516,7 +577,7 @@ function App() {
     const optimistic = applyOptimisticPermission(previous, move.repoNames, move.target)
 
     updateSubjectPermissions(move.subject, optimistic)
-    setWriting(true)
+    addWriteOp()
     setNotice({
       tone: 'info',
       title: '正在顺序执行操作队列。',
@@ -533,6 +594,11 @@ function App() {
       const settled = reconcileBatchResults(previous, optimistic, results)
       updateSubjectPermissions(move.subject, settled.next)
       setNotice(buildBatchNotice(move.target, settled.success, settled.failed))
+
+      // Refresh access tags for successfully updated repos
+      if (settled.success.length > 0) {
+        refreshRepoTags(move.client, settled.success)
+      }
     } catch (error) {
       updateSubjectPermissions(move.subject, previous)
       setNotice({
@@ -541,7 +607,7 @@ function App() {
         description: formatError(error, '写入 GitHub 权限时出现未预期错误。'),
       })
     } finally {
-      setWriting(false)
+      removeWriteOp()
     }
   }
 
@@ -837,7 +903,15 @@ function App() {
                   清空过滤
                 </button>
                 <span className="badge">已选卡片：{selectedRepos.size}</span>
-                <span className="badge">写入状态：{writing ? '提交中' : '空闲'}</span>
+                <span className={`badge ops-badge${activeOps.reads > 0 || activeOps.writes > 0 ? ' busy' : ''}`}>
+                  操作状态：{activeOps.reads === 0 && activeOps.writes === 0
+                    ? '空闲'
+                    : [
+                        activeOps.reads > 0 ? `读取 ${activeOps.reads}` : '',
+                        activeOps.writes > 0 ? `写入 ${activeOps.writes}` : '',
+                      ].filter(Boolean).join(' ')
+                  }
+                </span>
               </div>
               </div>
             </div>

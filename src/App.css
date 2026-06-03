@@ -626,6 +626,19 @@
   margin-left: auto;
 }
 
+.ops-badge.busy {
+  background: linear-gradient(135deg, rgba(13, 110, 253, 0.12), rgba(102, 16, 242, 0.08));
+  border-color: rgba(13, 110, 253, 0.25);
+  color: #0d6efd;
+  font-weight: 600;
+  animation: ops-pulse 2s ease-in-out infinite;
+}
+
+@keyframes ops-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 @media (max-width: 960px) {
   .app-shell {
     padding: 16px;
