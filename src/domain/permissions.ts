@@ -24,6 +24,15 @@ export const PERMISSION_DISPLAY_LABELS: Record<PermissionLevel, string> = {
   admin: 'Admin',
 }
 
+export const PERMISSION_DESCRIPTIONS: Record<PermissionLevel, string> = {
+  none: '无任何访问权限',
+  pull: '可读取和克隆仓库代码',
+  triage: '可管理 Issue 和 Pull Request',
+  push: '可推送代码到仓库',
+  maintain: '可管理仓库设置（不含删除等敏感操作）',
+  admin: '完全控制：可修改权限、删除仓库等',
+}
+
 const PERMISSION_RANK: Record<PermissionLevel, number> = {
   none: 0,
   pull: 1,

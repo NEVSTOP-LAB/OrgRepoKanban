@@ -1,6 +1,7 @@
 import { buildBoardColumns, type RepoSummary } from '../domain/board'
 import {
   PERMISSION_COLUMNS,
+  PERMISSION_DESCRIPTIONS,
   PERMISSION_DISPLAY_LABELS,
   type PermissionLevel,
 } from '../domain/permissions'
@@ -113,7 +114,7 @@ export function PermissionBoard(props: PermissionBoardProps) {
           onDrop={(event) => onDrop(event, column)}
         >
           <header className="column-header">
-            <h3>{PERMISSION_DISPLAY_LABELS[column]}</h3>
+            <h3 title={PERMISSION_DESCRIPTIONS[column]}>{PERMISSION_DISPLAY_LABELS[column]}</h3>
             <span>{columns[column].length}</span>
           </header>
 
@@ -133,9 +134,15 @@ export function PermissionBoard(props: PermissionBoardProps) {
                   type="button"
                   draggable={interactive}
                   className={`repo-card ${selected ? 'selected' : ''}`}
-                  onClick={(event) =>
-                    onToggleSelect(repo.name, event.ctrlKey || event.metaKey)
-                  }
+                  onClick={(event) => {
+                    const additive = event.ctrlKey || event.metaKey
+                    // Plain click on selected card: toggle off
+                    if (!additive && selected) {
+                      onToggleSelect(repo.name, true)
+                    } else {
+                      onToggleSelect(repo.name, additive)
+                    }
+                  }}
                   onDragStart={(event) => {
                     if (!interactive) {
                       event.preventDefault()
