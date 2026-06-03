@@ -2,6 +2,7 @@ import {
   PERMISSION_COLUMNS,
   type PermissionLevel,
 } from './permissions'
+import type { RepoAccessEntry } from '../github/data'
 
 export interface RepoSummary {
   id: number
@@ -10,6 +11,8 @@ export interface RepoSummary {
   url: string
   isPrivate?: boolean
   isFork?: boolean
+  topics?: string[]
+  accessList?: RepoAccessEntry[]
 }
 
 export type BoardColumns = Record<PermissionLevel, RepoSummary[]>
@@ -55,6 +58,46 @@ function matchesInheritedFilter(
 
   // 'direct-only': show repos NOT inherited from parent
   return !isInherited
+}
+
+export function matchesFilterQuery(repo: RepoSummary, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase()
+
+  if (!normalizedQuery) {
+    return true
+  }
+
+  const fields: string[] = [repo.name]
+
+  if (repo.topics) {
+    fields.push(...repo.topics)
+  }
+
+  if (repo.accessList) {
+    for (const entry of repo.accessList) {
+      fields.push(entry.name)
+    }
+  }
+
+  for (const field of fields) {
+    const normalized = field.toLowerCase()
+    if (normalized.includes(normalizedQuery)) {
+      return true
+    }
+
+    // Fuzzy match: characters appear in order
+    let pointer = 0
+    for (const character of normalized) {
+      if (character === normalizedQuery[pointer]) {
+        pointer += 1
+        if (pointer === normalizedQuery.length) {
+          return true
+        }
+      }
+    }
+  }
+
+  return false
 }
 
 export function searchRepoByName(name: string, query: string): boolean {
@@ -104,7 +147,7 @@ export function buildBoardColumns(
       continue
     }
 
-    if (!searchRepoByName(repo.name, query)) {
+    if (!matchesFilterQuery(repo, query)) {
       continue
     }
 

@@ -52,6 +52,27 @@ function createDeferredResponse() {
   }
 }
 
+function makeTopicsResponse() {
+  return new Response(JSON.stringify({ names: [] }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+function makeTeamsAccessResponse() {
+  return new Response(JSON.stringify([]), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+function makeCollaboratorsAccessResponse() {
+  return new Response(JSON.stringify([]), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -61,7 +82,7 @@ describe('App', () => {
 
   it('shows security note that PAT and organization are not persisted', () => {
     render(<App />)
-    expect(screen.getByText('PAT 与组织名仅保存在当前页面内存中，不会写入本地存储。')).toBeInTheDocument()
+    expect(screen.getByText('PAT 与组织名仅存内存中，可由浏览器密码管理器保存。')).toBeInTheDocument()
   })
 
   it('loads admin board and displays default team permissions', async () => {
@@ -79,7 +100,7 @@ describe('App', () => {
               id: 1,
               name: 'repo-a',
               full_name: 'acme/repo-a',
-              private: false,
+              private: true,
               fork: false,
             },
             {
@@ -114,6 +135,12 @@ describe('App', () => {
           },
         ),
       )
+      .mockResolvedValueOnce(makeTopicsResponse())
+      .mockResolvedValueOnce(makeTeamsAccessResponse())
+      .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
+      .mockResolvedValueOnce(makeTopicsResponse())
+      .mockResolvedValueOnce(makeTeamsAccessResponse())
+      .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
       .mockResolvedValueOnce(
         new Response(JSON.stringify([{ name: 'repo-a', role_name: 'push' }]), {
           status: 200,
@@ -196,6 +223,15 @@ describe('App', () => {
           },
         ),
       )
+      .mockResolvedValueOnce(makeTopicsResponse())
+      .mockResolvedValueOnce(makeTeamsAccessResponse())
+      .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
+      .mockResolvedValueOnce(makeTopicsResponse())
+      .mockResolvedValueOnce(makeTeamsAccessResponse())
+      .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
+      .mockResolvedValueOnce(makeTopicsResponse())
+      .mockResolvedValueOnce(makeTeamsAccessResponse())
+      .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([
@@ -220,9 +256,15 @@ describe('App', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
 
+    // Default filter is "仅 Private", only repo-b (private) shows initially
     await waitFor(() => {
-      expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
+      expect(screen.getByTestId('column-pull')).toHaveTextContent('repo-b')
     })
+
+    // Switch to "全部" for full filter testing
+    fireEvent.click(screen.getByRole('button', { name: '全部' }))
+
+    expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
 
     fireEvent.click(screen.getByRole('button', { name: '仅 Public' }))
 
@@ -262,14 +304,14 @@ describe('App', () => {
                 id: 1,
                 name: 'repo-a',
                 full_name: 'acme/repo-a',
-                private: false,
+                private: true,
                 fork: false,
               },
               {
                 id: 2,
                 name: 'repo-b',
                 full_name: 'acme/repo-b',
-                private: false,
+                private: true,
                 fork: false,
               },
             ]),
@@ -348,18 +390,18 @@ describe('App', () => {
     dragRepoToColumn('repo-a', 'admin')
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(6)
+      expect(fetchMock).toHaveBeenCalledTimes(12)
     })
 
     dragRepoToColumn('repo-b', 'maintain')
 
     expect(confirmSpy).not.toHaveBeenCalled()
-    expect(fetchMock).toHaveBeenCalledTimes(6)
+    expect(fetchMock).toHaveBeenCalledTimes(12)
 
     firstWrite.resolve(new Response(null, { status: 204 }))
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(7)
+      expect(fetchMock).toHaveBeenCalledTimes(13)
     })
 
     secondWrite.resolve(new Response(null, { status: 204 }))
@@ -389,14 +431,14 @@ describe('App', () => {
               id: 1,
               name: 'repo-a',
               full_name: 'acme/repo-a',
-              private: false,
+              private: true,
               fork: false,
             },
             {
               id: 2,
               name: 'repo-b',
               full_name: 'acme/repo-b',
-              private: false,
+              private: true,
               fork: false,
             },
           ]),
@@ -424,6 +466,12 @@ describe('App', () => {
           },
         ),
       )
+      .mockResolvedValueOnce(makeTopicsResponse())
+      .mockResolvedValueOnce(makeTeamsAccessResponse())
+      .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
+      .mockResolvedValueOnce(makeTopicsResponse())
+      .mockResolvedValueOnce(makeTeamsAccessResponse())
+      .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([
@@ -461,7 +509,7 @@ describe('App', () => {
     dragRepoToColumn('repo-a', 'admin')
 
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledTimes(5)
+    expect(fetchMock).toHaveBeenCalledTimes(11)
 
     confirmSpy.mockRestore()
   })
@@ -477,7 +525,7 @@ describe('App', () => {
     function makeReposResponse() {
       return new Response(
         JSON.stringify([
-          { id: 1, name: 'repo-a', full_name: 'acme/repo-a', private: false, fork: false },
+          { id: 1, name: 'repo-a', full_name: 'acme/repo-a', private: true, fork: false },
         ]),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
@@ -517,6 +565,9 @@ describe('App', () => {
       .mockResolvedValueOnce(makeReposResponse())
       .mockResolvedValueOnce(makeTeamsResponse())
       .mockResolvedValueOnce(makeMembersResponse())
+      .mockResolvedValueOnce(makeTopicsResponse())
+      .mockResolvedValueOnce(makeTeamsAccessResponse())
+      .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
       .mockResolvedValueOnce(makeTeamReposResponse())
 
     render(<App />)

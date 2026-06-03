@@ -4,6 +4,9 @@ import type {
   GithubRepo,
   GithubTeam,
   OrgMember,
+  RepoAccessEntry,
+  RepoCollaboratorAccess,
+  RepoTeamAccess,
 } from './data'
 
 export interface HttpError extends Error {
@@ -58,6 +61,52 @@ export class GithubClient {
 
   async listOrgRepos(): Promise<GithubRepo[]> {
     return this.paginate<GithubRepo[]>(`/orgs/${encodeURIComponent(this.org)}/repos?per_page=100&type=all`)
+  }
+
+  async getRepoTopics(repoName: string): Promise<string[]> {
+    const response = await this.rawRequest(
+      `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/topics`,
+      {
+        headers: new Headers({ accept: 'application/vnd.github.mercy-preview+json' }),
+      },
+    )
+    const payload = (await this.parseJson(response)) as { names?: string[] } | null
+    return payload?.names ?? []
+  }
+
+  async getRepoAccessList(repoName: string): Promise<RepoAccessEntry[]> {
+    const [teams, collaborators] = await Promise.all([
+      this.paginate<RepoTeamAccess[]>(
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/teams?per_page=100`,
+      ),
+      this.paginate<RepoCollaboratorAccess[]>(
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/collaborators?per_page=100&affiliation=direct`,
+      ),
+    ])
+
+    const entries: RepoAccessEntry[] = []
+
+    for (const team of teams) {
+      const perm = normalizePermission(team.permission ?? 'none')
+      if (perm !== 'none') {
+        entries.push({ kind: 'team', name: team.slug ?? team.name, permission: perm })
+      }
+    }
+
+    for (const user of collaborators) {
+      const perm = normalizePermission(user.permissions?.admin ? 'admin'
+        : user.permissions?.maintain ? 'maintain'
+        : user.permissions?.push ? 'push'
+        : user.permissions?.triage ? 'triage'
+        : user.role_name ? user.role_name
+        : 'none')
+      // Only include direct (non-team-inherited) collaborators
+      if (perm !== 'none') {
+        entries.push({ kind: 'user', name: user.login, permission: perm })
+      }
+    }
+
+    return entries
   }
 
   async listTeams(): Promise<GithubTeam[]> {

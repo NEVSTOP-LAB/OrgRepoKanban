@@ -142,7 +142,7 @@ function App() {
   const [selectedTeam, setSelectedTeam] = useState('')
   const [selectedUser, setSelectedUser] = useState('')
   const [filterQuery, setFilterQuery] = useState('')
-  const [filterPreset, setFilterPreset] = useState<RepoFilterPreset>('all')
+  const [filterPreset, setFilterPreset] = useState<RepoFilterPreset>('private')
   const [inheritedFilter, setInheritedFilter] = useState<InheritedFilter>('all')
   const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -158,6 +158,8 @@ function App() {
     url: repo.html_url,
     isPrivate: Boolean(repo.private),
     isFork: Boolean(repo.fork),
+    topics: repo.topics ?? [],
+    accessList: repo.accessList ?? [],
   }))
 
   const emptyPermissionMap = buildEmptyPermissionMap(repos)
@@ -300,7 +302,7 @@ function App() {
     setNotice(null)
     setSelectedRepos(new Set())
     setFilterQuery('')
-    setFilterPreset('all')
+    setFilterPreset('private')
     setInheritedFilter('all')
     if (isRefresh) {
       setRefreshing(true)
@@ -341,8 +343,6 @@ function App() {
       const flattenedTeams = flattenTeamTree(buildTeamTreeOptions(teams))
       const defaultTeam = flattenedTeams[0]?.team.slug ?? ''
 
-      // On refresh, preserve the current subject kind (team vs. user). On initial connect, default to
-      // team mode when teams exist. If teams disappeared, force back to user mode.
       const nextSubjectKind = defaultTeam
         ? (isRefresh ? subjectKind : 'team')
         : 'user'
@@ -358,6 +358,7 @@ function App() {
       setSubjectKind(nextSubjectKind)
       setSelectedTeam(defaultTeam)
 
+      // Load team permissions first so the board shows immediately
       if (nextSubjectKind === 'team' && defaultTeam) {
         setSubjectLoading(true)
         const teamRepoPermissions = await nextClient.listTeamRepos(defaultTeam)
@@ -365,6 +366,10 @@ function App() {
           [defaultTeam]: toPermissionMap(repoList, teamRepoPermissions),
         })
         setSubjectLoading(false)
+      }
+
+      // Start progressive tag loading in background – don't await
+      void loadRepoTags(nextClient, repoList)
       }
 
       setNotice({
@@ -781,10 +786,10 @@ function App() {
                 <div className="field toolbar-search">
                   <input
                     id="repo-filter"
-                    aria-label="按仓库名称过滤"
+                    aria-label="按名称、topic 或团队/成员过滤"
                     type="text"
                     value={filterQuery}
-                    placeholder="按仓库名称过滤..."
+                    placeholder="搜索名称、topic、团队或成员..."
                     onChange={(event) => setFilterQuery(event.target.value)}
                   />
                 </div>

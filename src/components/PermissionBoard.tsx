@@ -140,7 +140,22 @@ export function PermissionBoard(props: PermissionBoardProps) {
                   }}
                   aria-label={repo.name}
                 >
-                  <span className="repo-card-name">{repo.name}</span>
+                  <div className="repo-card-info">
+                    <span className="repo-card-name">{repo.name}</span>
+                    <span className="repo-card-tags">
+                      <span className={`repo-tag ${repo.isPrivate ? 'is-private' : 'is-public'}`}>
+                        {repo.isPrivate ? '私有' : '公开'}
+                      </span>
+                      {repo.topics?.map((t) => (
+                        <span key={t} className="repo-tag is-topic">{t}</span>
+                      ))}
+                      {repo.accessList?.map((entry, i) => (
+                        <span key={`${entry.kind}-${entry.name}-${i}`} className={`repo-tag is-access ${entry.kind}`}>
+                          {entry.kind === 'team' ? '👥' : '👤'}{entry.name}:{PERMISSION_DISPLAY_LABELS[entry.permission]}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
                   <a
                     className="repo-card-link"
                     href={repo.url}

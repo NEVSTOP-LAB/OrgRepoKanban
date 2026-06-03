@@ -352,7 +352,15 @@
 }
 
 .toolbar-search {
-  min-width: 180px;
+  min-width: 280px;
+}
+
+.board-panel {
+  padding: 16px 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .permission-board {
@@ -361,7 +369,8 @@
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 4px;
-  align-items: start;
+  flex: 1;
+  min-height: 0;
 }
 
 .permission-column {
@@ -436,6 +445,56 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.repo-card-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.repo-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.repo-tag {
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.repo-tag.is-public {
+  background: rgba(25, 135, 84, 0.1);
+  color: #198754;
+}
+
+.repo-tag.is-private {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+}
+
+.repo-tag.is-topic {
+  background: rgba(13, 110, 253, 0.06);
+  color: #0d6efd;
+}
+
+.repo-tag.is-access.team {
+  background: rgba(102, 16, 242, 0.06);
+  color: #6610f2;
+}
+
+.repo-tag.is-access.user {
+  background: rgba(25, 135, 84, 0.06);
+  color: #198754;
 }
 
 .repo-card-link {

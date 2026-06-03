@@ -11,6 +11,31 @@ export interface GithubRepo {
   html_url: string
   private?: boolean
   fork?: boolean
+  topics?: string[]
+  accessList?: RepoAccessEntry[]
+}
+
+export interface RepoAccessEntry {
+  kind: 'team' | 'user'
+  name: string
+  permission: PermissionLevel
+}
+
+export interface RepoTeamAccess {
+  slug?: string
+  name: string
+  permission?: string
+}
+
+export interface RepoCollaboratorAccess {
+  login: string
+  role_name?: string
+  permissions?: {
+    admin?: boolean
+    maintain?: boolean
+    push?: boolean
+    triage?: boolean
+  }
 }
 
 export interface GithubTeamParent {
