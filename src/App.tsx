@@ -103,17 +103,17 @@ function buildQueueNotice(move: QueuedMove): Notice {
   }
 }
 
-const REPO_FILTER_PRESETS: Array<{ key: RepoFilterPreset; label: string }> = [
-  { key: 'all', label: '全部' },
-  { key: 'public', label: '仅 Public' },
-  { key: 'private', label: '仅 Private' },
-  { key: 'forked', label: '仅 Forked' },
+const REPO_FILTER_PRESETS: Array<{ key: RepoFilterPreset; label: string; icon: string }> = [
+  { key: 'all', label: '全部', icon: '⊡' },
+  { key: 'public', label: '公开', icon: '🔓' },
+  { key: 'private', label: '私有', icon: '🔒' },
+  { key: 'forked', label: 'Fork', icon: '⑂' },
 ]
 
-const INHERITED_FILTER_PRESETS: Array<{ key: InheritedFilter; label: string }> = [
-  { key: 'all', label: '全部' },
-  { key: 'inherited-only', label: '仅继承' },
-  { key: 'direct-only', label: '仅直接授权' },
+const INHERITED_FILTER_PRESETS: Array<{ key: InheritedFilter; label: string; icon: string }> = [
+  { key: 'all', label: '全部', icon: '⊡' },
+  { key: 'inherited-only', label: '继承', icon: '⤵' },
+  { key: 'direct-only', label: '直接', icon: '⤴' },
 ]
 
 function App() {
@@ -272,58 +272,68 @@ function App() {
     userLogin: string,
   ) => {
     if (!userLogin) return
-    setSubjectLoading(true)
     setLoadingProgress({ completed: 0, total: activeRepos.length })
-    setActiveOps((prev) => ({ ...prev, reads: prev.reads + activeRepos.length }))
 
     try {
-      // 并发加载每个仓库的用户权限（限制并发数避免触发 API 限流）
-      const CONCURRENCY = 6
+      // Try to derive permissions from cached accessList (fast path)
+      const reposWithCache = activeRepos.filter((r) => r.accessList && r.accessList.length > 0)
+      const reposWithoutCache = activeRepos.filter((r) => !r.accessList || r.accessList.length === 0)
+      const totalOps = reposWithoutCache.length + 1 // +1 for listUserTeams
+      setActiveOps((prev) => ({ ...prev, reads: prev.reads + totalOps }))
+
       const permissionMap: Record<string, PermissionLevel> = {}
       let completed = 0
 
-      const queue = [...activeRepos]
-      const runWorker = async () => {
-        while (queue.length > 0) {
-          const repo = queue.shift()!
-          try {
-            permissionMap[repo.name] = await activeClient.getUserRepoPermission(repo.name, userLogin)
-          } catch {
-            permissionMap[repo.name] = 'none'
-          }
-          completed++
-          removeReadOp()
-          setLoadingProgress({ completed, total: activeRepos.length })
-        }
+      // Fast path: derive direct permissions from cached accessList
+      for (const repo of reposWithCache) {
+        const entry = repo.accessList!.find((e) => e.kind === 'user' && e.name === userLogin)
+        permissionMap[repo.name] = entry?.permission ?? 'none'
+        completed++
+        setLoadingProgress({ completed, total: activeRepos.length })
       }
 
-      const workers = Array.from({ length: Math.min(CONCURRENCY, activeRepos.length) }, () => runWorker())
-      await Promise.all(workers)
+      // Slow path: fetch missing repos via API
+      if (reposWithoutCache.length > 0) {
+        const CONCURRENCY = 6
+        const queue = [...reposWithoutCache]
+        const runWorker = async () => {
+          while (queue.length > 0) {
+            const repo = queue.shift()!
+            try {
+              permissionMap[repo.name] = await activeClient.getUserRepoPermission(repo.name, userLogin)
+            } catch {
+              permissionMap[repo.name] = 'none'
+            }
+            completed++
+            removeReadOp()
+            setLoadingProgress({ completed, total: activeRepos.length })
+          }
+        }
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, reposWithoutCache.length) }, () => runWorker()))
+      }
 
       setUserPermissions((previous) => ({
         ...previous,
         [userLogin]: permissionMap,
       }))
 
-      // 并发加载用户所属团队的继承权限
+      // Derive team-inherited permissions from cached accessList
       const userTeams = await activeClient.listUserTeams(userLogin)
-      if (userTeams.length > 0) {
-        const teamResults = await Promise.all(
-          userTeams.map((teamSlug) => activeClient.listTeamRepos(teamSlug)),
-        )
+      removeReadOp()
+      const teamSet = new Set(userTeams)
 
+      if (teamSet.size > 0) {
         const teamPermMap: Record<string, PermissionLevel> = {}
         for (const repo of activeRepos) {
           teamPermMap[repo.name] = 'none'
-        }
-
-        for (let i = 0; i < userTeams.length; i++) {
-          const teamMap = toPermissionMap(activeRepos, teamResults[i])
-          for (const repo of activeRepos) {
-            const teamPerm = teamMap[repo.name] ?? 'none'
-            const current = teamPermMap[repo.name] ?? 'none'
-            if (comparePermission(teamPerm, current) > 0) {
-              teamPermMap[repo.name] = teamPerm
+          if (repo.accessList) {
+            for (const entry of repo.accessList) {
+              if (entry.kind === 'team' && teamSet.has(entry.name)) {
+                const current = teamPermMap[repo.name] ?? 'none'
+                if (comparePermission(entry.permission, current) > 0) {
+                  teamPermMap[repo.name] = entry.permission
+                }
+              }
             }
           }
         }
@@ -344,7 +354,6 @@ function App() {
         description: formatError(error, '无法从 GitHub 读取用户权限信息。'),
       })
     } finally {
-      setSubjectLoading(false)
       setLoadingProgress(null)
     }
   }
@@ -471,35 +480,23 @@ function App() {
     }
 
     let cancelled = false
-    setSubjectLoading(true)
 
     void client
       .listTeamRepos(selectedTeam)
       .then((entries) => {
-        if (cancelled) {
-          return
-        }
-
+        if (cancelled) return
         setTeamPermissions((previous) => ({
           ...previous,
           [selectedTeam]: toPermissionMap(repos, entries),
         }))
       })
       .catch((error) => {
-        if (cancelled) {
-          return
-        }
-
+        if (cancelled) return
         setNotice({
           tone: 'error',
           title: '读取团队仓库权限失败。',
           description: formatError(error, '无法从 GitHub 获取该团队的仓库权限。'),
         })
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSubjectLoading(false)
-        }
       })
 
     return () => {
@@ -670,7 +667,7 @@ function App() {
     })
   }
 
-  const isBusy = connecting || refreshing || subjectLoading
+  const isBusy = connecting || refreshing
 
   return (
     <main className="app-shell">
@@ -850,14 +847,26 @@ function App() {
               <div className="toolbar-right">
                 <div className="toolbar-main">
                 <div className="field toolbar-search">
-                  <input
-                    id="repo-filter"
-                    aria-label="按名称、topic 或团队/成员过滤"
-                    type="text"
-                    value={filterQuery}
-                    placeholder="搜索名称、topic、团队或成员..."
-                    onChange={(event) => setFilterQuery(event.target.value)}
-                  />
+                  <div className="search-box">
+                    <input
+                      id="repo-filter"
+                      aria-label="按名称、topic 或团队/成员过滤"
+                      type="text"
+                      value={filterQuery}
+                      placeholder="搜索名称、topic、团队或成员..."
+                      onChange={(event) => setFilterQuery(event.target.value)}
+                    />
+                    {filterQuery ? (
+                      <button
+                        type="button"
+                        className="search-clear"
+                        onClick={() => setFilterQuery('')}
+                        aria-label="清空过滤"
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="preset-filter-group" aria-label="仓库预置过滤">
@@ -865,12 +874,12 @@ function App() {
                     <button
                       key={preset.key}
                       type="button"
-                      className={`ghost-button preset-filter-button ${
-                        filterPreset === preset.key ? 'active' : ''
-                      }`}
+                      className={`filter-icon-btn ${filterPreset === preset.key ? 'active' : ''}`}
+                      title={preset.label}
+                      aria-label={preset.label}
                       onClick={() => setFilterPreset(preset.key)}
                     >
-                      {preset.label}
+                      {preset.icon} {preset.label}
                     </button>
                   ))}
                 </div>
@@ -881,12 +890,10 @@ function App() {
                       <button
                         key={preset.key}
                         type="button"
-                        className={`ghost-button preset-filter-button ${
-                          inheritedFilter === preset.key ? 'active' : ''
-                        }`}
-                        onClick={() => setInheritedFilter(preset.key)}
+                        className={`filter-icon-btn ${inheritedFilter === preset.key ? 'active' : ''}`}
+                        title={preset.label}                      aria-label={preset.label}                        onClick={() => setInheritedFilter(preset.key)}
                       >
-                        {preset.label}
+                        {preset.icon} {preset.label}
                       </button>
                     ))}
                   </div>
@@ -894,14 +901,6 @@ function App() {
               </div>
 
               <div className="toolbar-side">
-                <button
-                  type="button"
-                  className="ghost-button"
-                  disabled={!filterQuery}
-                  onClick={() => setFilterQuery('')}
-                >
-                  清空过滤
-                </button>
                 <span className="badge">已选卡片：{selectedRepos.size}</span>
                 <span className={`badge ops-badge${activeOps.reads > 0 || activeOps.writes > 0 ? ' busy' : ''}`}>
                   操作状态：{activeOps.reads === 0 && activeOps.writes === 0
@@ -916,92 +915,27 @@ function App() {
               </div>
             </div>
 
-            {subjectLoading ? (
-              <div className="empty-state">
-                <strong>正在加载当前主体的权限快照...</strong>
-                {loadingProgress && loadingProgress.total > 0 && (
-                  <div style={{ width: '100%', maxWidth: 400, margin: '12px auto' }}>
-                    <div style={{
-                      background: '#e0e0e0',
-                      borderRadius: 4,
-                      height: 8,
-                      overflow: 'hidden',
-                    }}>
-                      <div style={{
-                        background: '#4caf50',
-                        height: '100%',
-                        width: `${Math.round((loadingProgress.completed / loadingProgress.total) * 100)}%`,
-                        transition: 'width 0.2s ease',
-                      }} />
-                    </div>
-                    <span style={{ fontSize: 12, color: '#666', marginTop: 4, display: 'inline-block' }}>
-                      {loadingProgress.completed} / {loadingProgress.total} 仓库已完成
-                    </span>
-                  </div>
-                )}
-                <span>读取完成后会自动刷新看板位置。</span>
-              </div>
-            ) : (
-              <PermissionBoard
-                repos={repoCards}
-                permissionByRepo={currentPermissionMap}
-                filterQuery={filterQuery}
-                filterPreset={filterPreset}
-                inheritedFilter={inheritedFilter}
-                parentPermissionByRepo={currentParentPermissionMap}
-                selectedRepos={selectedRepos}
-                interactive={isAdmin === true && !isBusy}
-                onToggleSelect={(repoName, additive) => {
-                  setSelectedRepos((previous) => toggleSelection(previous, repoName, additive))
-                }}
-                onMoveRequested={(repoNames, target) => {
-                  void handleMoveRequested(repoNames, target)
-                }}
-              />
-            )}
+            <PermissionBoard
+              repos={repoCards}
+              permissionByRepo={currentPermissionMap}
+              filterQuery={filterQuery}
+              filterPreset={filterPreset}
+              inheritedFilter={inheritedFilter}
+              parentPermissionByRepo={currentParentPermissionMap}
+              selectedRepos={selectedRepos}
+              interactive={isAdmin === true && !isBusy}
+              onToggleSelect={(repoName, additive) => {
+                setSelectedRepos((previous) => toggleSelection(previous, repoName, additive))
+              }}
+              onMoveRequested={(repoNames, target) => {
+                void handleMoveRequested(repoNames, target)
+              }}
+            />
           </>
         ) : (
           <div className="empty-state">
             <strong>先完成组织连接，再拖拽管理权限。</strong>
             <span>仅组织管理员令牌可用。</span>
-          </div>
-        )}
-      </section>
-
-      <section className="log-panel">
-        <div className="section-title">
-          <div>
-            <h2>执行结果</h2>
-            <p>批量变更结果，列出成功与失败的仓库。</p>
-          </div>
-        </div>
-
-        {notice?.successRepos?.length || notice?.failedRepos?.length ? (
-          <div className="log-columns">
-            <div className="log-box">
-              <h3>成功仓库</h3>
-              <ul>
-                {(notice.successRepos ?? []).map((repoName) => (
-                  <li key={repoName}>{repoName}</li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="log-box">
-              <h3>失败仓库</h3>
-              <ul>
-                {(notice.failedRepos ?? []).map((item) => (
-                  <li key={item.repo}>
-                    {item.repo}：{item.error}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <strong>暂无批量执行记录。</strong>
-            <span>完成一次拖拽授权后，这里会展示成功与失败的详细结果。</span>
           </div>
         )}
       </section>

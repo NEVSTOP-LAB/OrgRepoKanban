@@ -117,6 +117,12 @@ export function PermissionBoard(props: PermissionBoardProps) {
             <span>{columns[column].length}</span>
           </header>
 
+          <span className="column-watermark" aria-hidden="true">
+            {Array.from({ length: 12 }, (_, i) => (
+              <span key={i}>{PERMISSION_DISPLAY_LABELS[column]}</span>
+            ))}
+          </span>
+
           <div className="column-cards">
             {columns[column].map((repo) => {
               const selected = selectedRepos.has(repo.name)

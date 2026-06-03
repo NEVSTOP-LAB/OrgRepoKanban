@@ -266,13 +266,13 @@ describe('App', () => {
 
     expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
 
-    fireEvent.click(screen.getByRole('button', { name: '仅 Public' }))
+    fireEvent.click(screen.getByRole('button', { name: '公开' }))
 
     expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
     expect(screen.getByTestId('column-pull')).not.toHaveTextContent('repo-b')
     expect(screen.getByTestId('column-maintain')).not.toHaveTextContent('repo-c')
 
-    fireEvent.click(screen.getByRole('button', { name: '仅 Forked' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Fork' }))
 
     expect(screen.getByTestId('column-maintain')).toHaveTextContent('repo-c')
     expect(screen.getByTestId('column-push')).not.toHaveTextContent('repo-a')
