@@ -154,7 +154,15 @@ export function PermissionBoard(props: PermissionBoardProps) {
                   aria-label={repo.name}
                 >
                   <div className="repo-card-info">
-                    <span className="repo-card-name">{repo.name}</span>
+                    <a
+                      className="repo-card-name"
+                      href={repo.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      {repo.name}
+                    </a>
                     <span className="repo-card-tags">
                       <span className={`repo-tag ${repo.isPrivate ? 'is-private' : 'is-public'}`}>
                         {repo.isPrivate ? '私有' : '公开'}
@@ -169,16 +177,6 @@ export function PermissionBoard(props: PermissionBoardProps) {
                       ))}
                     </span>
                   </div>
-                  <a
-                    className="repo-card-link"
-                    href={repo.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`在 GitHub 中打开 ${repo.name}`}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    ↗
-                  </a>
                 </button>
               )
             })}

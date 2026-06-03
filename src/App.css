@@ -525,6 +525,13 @@
   white-space: nowrap;
   font-size: 13px;
   font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.repo-card-name:hover {
+  color: #0d6efd;
+  text-decoration: underline;
 }
 
 .repo-card-info {
@@ -573,21 +580,6 @@
 .repo-tag.is-access.user {
   background: rgba(25, 135, 84, 0.06);
   color: #198754;
-}
-
-.repo-card-link {
-  flex-shrink: 0;
-  color: var(--ink-muted);
-  text-decoration: none;
-  font-size: 11px;
-  line-height: 1;
-  opacity: 0.5;
-  transition: opacity 140ms ease;
-}
-
-.repo-card-link:hover {
-  opacity: 1;
-  color: var(--ink);
 }
 
 .repo-card.selected {

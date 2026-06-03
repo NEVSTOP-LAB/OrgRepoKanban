@@ -123,8 +123,8 @@ function App() {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [subjectLoading, setSubjectLoading] = useState(false)
-  const [loadingProgress, setLoadingProgress] = useState<{ completed: number; total: number } | null>(null)
+  const [_subjectLoading, setSubjectLoading] = useState(false)
+  const [_loadingProgress, setLoadingProgress] = useState<{ completed: number; total: number } | null>(null)
   const [activeOps, setActiveOps] = useState({ reads: 0, writes: 0 })
   const writing = activeOps.writes > 0
 
@@ -206,7 +206,6 @@ function App() {
 
   // Refresh access tags for specific repos (called after permission changes)
   async function refreshRepoTags(activeClient: GithubClient, repoNames: string[]) {
-    const nameSet = new Set(repoNames)
     for (const repoName of repoNames) {
       addReadOp()
       try {
@@ -823,7 +822,7 @@ function App() {
                   {refreshing ? '刷新中...' : '刷新'}
                 </button>
 
-                {isAdmin === false ? (
+                {isAdmin !== true && isAdmin !== null ? (
                   <span className="readonly-tip">无管理员权限</span>
                 ) : null}
               </div>
