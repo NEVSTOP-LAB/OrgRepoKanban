@@ -75,6 +75,12 @@ export function SecretManager({ onBack }: SecretManagerProps) {
   const [dragOverRepo, setDragOverRepo] = useState<string | null>(null)
   const [dragOverSecret, setDragOverSecret] = useState<string | null>(null)
 
+  // Multi-select state for repo cards
+  const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set())
+
+  // Loading progress (total private repos to load)
+  const [loadingTotal, setLoadingTotal] = useState(0)
+
   // Safari-compatible DataTransfer type check (DOMStringList lacks .includes)
   const hasDragType = (dt: DataTransfer, type: string): boolean =>
     Array.from(dt.types).includes(type)
@@ -140,6 +146,8 @@ export function SecretManager({ onBack }: SecretManagerProps) {
 
   const loadData = async (activeClient: GithubClient) => {
     setLoading(true)
+    setRepoStates([])
+    setSelectedRepos(new Set())
     clearNotice()
 
     try {
@@ -153,20 +161,21 @@ export function SecretManager({ onBack }: SecretManagerProps) {
 
       // Filter to private repos only
       const privateRepos = repos.filter((r) => Boolean(r.private))
+      setLoadingTotal(privateRepos.length)
 
-      // Load repo secrets for each private repo (with concurrency)
+      // Load repo secrets for each private repo (with concurrency),
+      // streaming each card into state as it arrives.
       const CONCURRENCY = 6
       const queue = [...privateRepos]
-      const results: RepoSecretState[] = []
 
       const worker = async () => {
         while (queue.length > 0) {
           const repo = queue.shift()!
           try {
             const repoSecrets = await activeClient.listRepoSecrets(repo.name)
-            results.push({ repo, secrets: repoSecrets })
+            setRepoStates((prev) => [...prev, { repo, secrets: repoSecrets }])
           } catch {
-            results.push({ repo, secrets: [] })
+            setRepoStates((prev) => [...prev, { repo, secrets: [] }])
           }
         }
       }
@@ -175,15 +184,6 @@ export function SecretManager({ onBack }: SecretManagerProps) {
         Array.from({ length: Math.min(CONCURRENCY, privateRepos.length) }, () => worker()),
       )
 
-      // Sort: repos with secrets first
-      results.sort((a, b) => {
-        const aCount = a.secrets.length
-        const bCount = b.secrets.length
-        if (aCount !== bCount) return bCount - aCount
-        return a.repo.name.localeCompare(b.repo.name)
-      })
-
-      setRepoStates(results)
       setNotice({
         tone: 'info',
         title: `已加载 ${secrets.length} 个组织 Secret 和 ${privateRepos.length} 个私有仓库。`,
@@ -196,6 +196,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
       })
     } finally {
       setLoading(false)
+      setLoadingTotal(0)
     }
   }
 
@@ -214,6 +215,28 @@ export function SecretManager({ onBack }: SecretManagerProps) {
     )
   }
 
+  // ── Multi-select ──────────────────────────────────────────────────────
+
+  const toggleRepoSelection = (repoName: string) => {
+    setSelectedRepos((prev) => {
+      const next = new Set(prev)
+      if (next.has(repoName)) {
+        next.delete(repoName)
+      } else {
+        next.add(repoName)
+      }
+      return next
+    })
+  }
+
+  const toggleAllRepos = () => {
+    if (selectedRepos.size === repoSummaries.length && repoSummaries.length > 0) {
+      setSelectedRepos(new Set())
+    } else {
+      setSelectedRepos(new Set(repoSummaries.map((r) => r.name)))
+    }
+  }
+
   // ── Drag & Drop ───────────────────────────────────────────────────────
 
   const onSecretDragStart = (event: React.DragEvent, secretName: string) => {
@@ -228,7 +251,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
     event.dataTransfer.effectAllowed = 'link'
   }
 
-  // Drop a secret onto a repo → set secret on repo
+  // Drop a secret onto a repo → set secret on repo (or all selected repos)
   const onRepoDrop = (event: React.DragEvent, repoName: string) => {
     event.preventDefault()
     setDragOverRepo(null)
@@ -242,14 +265,23 @@ export function SecretManager({ onBack }: SecretManagerProps) {
       return
     }
 
-    const configured = getRepoConfiguredSecrets(repoName)
+    // If dropping onto a selected repo and multiple repos are selected, apply to all selected
+    const targetRepos =
+      selectedRepos.has(repoName) && selectedRepos.size > 1
+        ? Array.from(selectedRepos)
+        : [repoName]
 
-    setPendingOps((prev) =>
-      addPendingOp(prev, repoName, payload.secretName, value, configured),
-    )
+    setPendingOps((prev) => {
+      let ops = prev
+      for (const target of targetRepos) {
+        const configured = getRepoConfiguredSecrets(target)
+        ops = addPendingOp(ops, target, payload.secretName, value, configured)
+      }
+      return ops
+    })
   }
 
-  // Drop a repo (dragged from right panel) onto a secret → set secret on repo
+  // Drop a repo (dragged from right panel) onto a secret → set secret on repo (or all selected repos)
   const onSecretDrop = (event: React.DragEvent, secretName: string) => {
     event.preventDefault()
     setDragOverSecret(null)
@@ -267,11 +299,20 @@ export function SecretManager({ onBack }: SecretManagerProps) {
       return
     }
 
-    const configured = getRepoConfiguredSecrets(repoName)
+    // If the dragged repo is selected and multiple repos are selected, apply to all selected
+    const targetRepos =
+      selectedRepos.has(repoName) && selectedRepos.size > 1
+        ? Array.from(selectedRepos)
+        : [repoName]
 
-    setPendingOps((prev) =>
-      addPendingOp(prev, repoName, secretName, value, configured),
-    )
+    setPendingOps((prev) => {
+      let ops = prev
+      for (const target of targetRepos) {
+        const configured = getRepoConfiguredSecrets(target)
+        ops = addPendingOp(ops, target, secretName, value, configured)
+      }
+      return ops
+    })
   }
 
   // Repo card drag start
@@ -597,7 +638,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
                     <span className="secret-card-name">{secret.name}</span>
                     <div className="secret-value-row">
                       <input
-                        type="password"
+                        type="text"
                         className="secret-value-input"
                         placeholder="输入 Secret 值..."
                         value={secret.userValue}
@@ -638,16 +679,34 @@ export function SecretManager({ onBack }: SecretManagerProps) {
           <div className="secret-column secret-right">
             <div className="secret-column-header">
               <h3>🔒 私有仓库</h3>
-              <span>{repoSummaries.length}</span>
+              <span>
+                {loading && loadingTotal > 0
+                  ? `${repoSummaries.length}/${loadingTotal}`
+                  : repoSummaries.length}
+              </span>
+              {!loading && repoSummaries.length > 0 ? (
+                <button
+                  type="button"
+                  className="select-all-button"
+                  onClick={toggleAllRepos}
+                >
+                  {selectedRepos.size === repoSummaries.length ? '取消全选' : '全选'}
+                </button>
+              ) : null}
             </div>
+            {selectedRepos.size > 0 ? (
+              <div className="selected-repos-hint">
+                已选 {selectedRepos.size} 个仓库 · 拖拽 Secret 将批量应用
+              </div>
+            ) : null}
             <div className="secret-column-body">
-              {repoSummaries.length === 0 ? (
+              {repoSummaries.length === 0 && !loading ? (
                 <div className="secret-empty">该组织暂无私有仓库</div>
               ) : null}
               {repoSummaries.map((repo) => (
                 <div
                   key={repo.name}
-                  className={`repo-secret-card${dragOverRepo === repo.name ? ' drag-over' : ''}`}
+                  className={`repo-secret-card${dragOverRepo === repo.name ? ' drag-over' : ''}${selectedRepos.has(repo.name) ? ' selected' : ''}`}
                   draggable={!isBusy}
                   onDragStart={(e) => onRepoDragStart(e, repo.name)}
                   onDragOver={(e) => {
@@ -661,6 +720,15 @@ export function SecretManager({ onBack }: SecretManagerProps) {
                   onDragLeave={() => setDragOverRepo(null)}
                   onDrop={(e) => onRepoDrop(e, repo.name)}
                 >
+                  <input
+                    type="checkbox"
+                    className="repo-select-checkbox"
+                    checked={selectedRepos.has(repo.name)}
+                    onChange={() => toggleRepoSelection(repo.name)}
+                    onClick={(e) => e.stopPropagation()}
+                    onDragStart={(e) => e.stopPropagation()}
+                    aria-label={`选择 ${repo.name}`}
+                  />
                   <div className="repo-card-info">
                     <a
                       className="repo-card-name"
