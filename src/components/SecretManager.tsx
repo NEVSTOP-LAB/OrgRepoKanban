@@ -321,20 +321,34 @@ export function SecretManager({ onBack }: SecretManagerProps) {
       }
     }
 
-    setPendingOps([])
-
-    // Clear secret values that were successfully written
+    // Keep failed ops in the queue for retry; only remove succeeded ones
     if (succeededIndices.size > 0) {
-      const writtenSecrets = new Set<string>()
-      for (const i of succeededIndices) {
-        if (pendingOps[i].action === 'set') {
-          writtenSecrets.add(pendingOps[i].secretName)
+      setPendingOps((prev) => prev.filter((_, i) => !succeededIndices.has(i)))
+    }
+
+    // Only clear a secret's value when ALL set ops for that name succeeded
+    // (if any op for secret X failed, keep the value so the user can retry)
+    if (succeededIndices.size > 0) {
+      // Collect secret names that had any failed op
+      const failedSecretNames = new Set<string>()
+      for (let i = 0; i < pendingOps.length; i++) {
+        if (!succeededIndices.has(i)) {
+          failedSecretNames.add(pendingOps[i].secretName)
         }
       }
-      if (writtenSecrets.size > 0) {
+
+      const safeToClear = new Set<string>()
+      for (const i of succeededIndices) {
+        const op = pendingOps[i]
+        if (op.action === 'set' && !failedSecretNames.has(op.secretName)) {
+          safeToClear.add(op.secretName)
+        }
+      }
+
+      if (safeToClear.size > 0) {
         setSecretValues((prev) => {
           const next = { ...prev }
-          for (const name of writtenSecrets) {
+          for (const name of safeToClear) {
             delete next[name]
           }
           return next
@@ -565,8 +579,11 @@ export function SecretManager({ onBack }: SecretManagerProps) {
                   onDragStart={(e) => onSecretDragStart(e, secret.name)}
                   onDragOver={(e) => {
                     e.preventDefault()
-                    e.dataTransfer.dropEffect = 'link'
-                    setDragOverSecret(secret.name)
+                    // Only accept repo→secret drops
+                    if (e.dataTransfer.types.includes('application/x-repo-name')) {
+                      e.dataTransfer.dropEffect = 'link'
+                      setDragOverSecret(secret.name)
+                    }
                   }}
                   onDragLeave={() => setDragOverSecret(null)}
                   onDrop={(e) => onSecretDrop(e, secret.name)}
@@ -630,8 +647,11 @@ export function SecretManager({ onBack }: SecretManagerProps) {
                   onDragStart={(e) => onRepoDragStart(e, repo.name)}
                   onDragOver={(e) => {
                     e.preventDefault()
-                    e.dataTransfer.dropEffect = 'link'
-                    setDragOverRepo(repo.name)
+                    // Only accept secret→repo drops
+                    if (e.dataTransfer.types.includes('application/json')) {
+                      e.dataTransfer.dropEffect = 'link'
+                      setDragOverRepo(repo.name)
+                    }
                   }}
                   onDragLeave={() => setDragOverRepo(null)}
                   onDrop={(e) => onRepoDrop(e, repo.name)}

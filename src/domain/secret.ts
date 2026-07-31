@@ -82,13 +82,6 @@ export function addPendingOp(
     )
   }
 
-  // Drop no-ops: setting a secret with empty value
-  if (action === 'set' && value.length === 0) {
-    return ops.filter(
-      (op) => !(op.repoName === repoName && op.secretName === secretName),
-    )
-  }
-
   const filtered = ops.filter(
     (op) => !(op.repoName === repoName && op.secretName === secretName),
   )
