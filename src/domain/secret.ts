@@ -58,12 +58,8 @@ export interface RepoSecretSummary {
  *
  * Rules:
  *  - If an op for the same repo+secret already exists, replace it.
- *  - A 'delete' op with an empty value is kept; a 'set' op with an empty value
- *    is discarded (no-op).
- *  - If the new op would restore the original state (the secret was already
- *    configured and we are setting the same value), it is dropped — this
- *    function does not know values, so we only drop redundant *delete* ops
- *    where the secret wasn't configured to begin with.
+ *  - A 'delete' op that targets a never-configured secret is dropped (no-op).
+ *  - An empty value selects 'delete' action; a non-empty value selects 'set'.
  */
 export function addPendingOp(
   ops: PendingSecretOp[],

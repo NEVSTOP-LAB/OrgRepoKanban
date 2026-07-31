@@ -75,6 +75,11 @@ export function SecretManager({ onBack }: SecretManagerProps) {
   const [dragOverRepo, setDragOverRepo] = useState<string | null>(null)
   const [dragOverSecret, setDragOverSecret] = useState<string | null>(null)
 
+  // Safari-compatible DataTransfer type check (DOMStringList lacks .includes)
+  const hasDragType = (dt: DataTransfer, type: string): boolean =>
+    Array.from(dt.types).includes(type)
+
+
   // ── Helpers ───────────────────────────────────────────────────────────
 
   const updateSecretValue = (name: string, value: string) => {
@@ -561,9 +566,9 @@ export function SecretManager({ onBack }: SecretManagerProps) {
             <div
               className="secret-column-body"
               onDragOver={(e) => {
-                e.preventDefault()
                 // Only accept repo→secret drops
-                if (e.dataTransfer.types.includes('application/x-repo-name')) {
+                if (hasDragType(e.dataTransfer, 'application/x-repo-name')) {
+                  e.preventDefault()
                   e.dataTransfer.dropEffect = 'link'
                 }
               }}
@@ -578,9 +583,9 @@ export function SecretManager({ onBack }: SecretManagerProps) {
                   draggable={!isBusy && secret.userValue.length > 0}
                   onDragStart={(e) => onSecretDragStart(e, secret.name)}
                   onDragOver={(e) => {
-                    e.preventDefault()
                     // Only accept repo→secret drops
-                    if (e.dataTransfer.types.includes('application/x-repo-name')) {
+                    if (hasDragType(e.dataTransfer, 'application/x-repo-name')) {
+                      e.preventDefault()
                       e.dataTransfer.dropEffect = 'link'
                       setDragOverSecret(secret.name)
                     }
@@ -646,9 +651,9 @@ export function SecretManager({ onBack }: SecretManagerProps) {
                   draggable={!isBusy}
                   onDragStart={(e) => onRepoDragStart(e, repo.name)}
                   onDragOver={(e) => {
-                    e.preventDefault()
                     // Only accept secret→repo drops
-                    if (e.dataTransfer.types.includes('application/json')) {
+                    if (hasDragType(e.dataTransfer, 'application/json')) {
+                      e.preventDefault()
                       e.dataTransfer.dropEffect = 'link'
                       setDragOverRepo(repo.name)
                     }

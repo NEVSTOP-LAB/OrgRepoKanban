@@ -37,7 +37,7 @@ describe('addPendingOp', () => {
     expect(result).toHaveLength(0)
   })
 
-  it('drops a no-op set when value is empty', () => {
+  it('keeps a delete op when secret was previously configured', () => {
     const result = addPendingOp([], 'repo-a', 'X', '', ['X'])
     // value is empty → action becomes 'delete'; configured is true → keep
     expect(result).toHaveLength(1)
