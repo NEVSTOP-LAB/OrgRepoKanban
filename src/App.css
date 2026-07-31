@@ -603,10 +603,16 @@
   transition: opacity 0.14s ease, background 0.14s ease;
 }
 
-.repo-tag-remove:hover {
+.repo-tag-remove:hover,
+.repo-tag-remove:focus-visible {
   opacity: 1;
   background: rgba(220, 53, 69, 0.15);
   color: #dc3545;
+}
+
+.repo-tag-remove:focus-visible {
+  outline: 2px solid rgba(13, 110, 253, 0.5);
+  outline-offset: 1px;
 }
 
 .repo-card.selected {

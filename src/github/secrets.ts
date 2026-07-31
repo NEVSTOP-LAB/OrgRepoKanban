@@ -1,8 +1,9 @@
 /**
  * GitHub Actions secrets encryption utility.
  *
- * GitHub encrypts secret values with libsodium sealed boxes before they
- * are sent to the API.  This module provides the pure encryption helper.
+ * Secret values MUST be encrypted client-side with libsodium sealed boxes
+ * before they are sent to the GitHub API.  This module provides the pure
+ * encryption helper used by the Secret Manager.
  */
 import _sodium from 'libsodium-wrappers'
 

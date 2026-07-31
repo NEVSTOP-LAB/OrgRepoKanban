@@ -400,7 +400,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
 
   // ── Render helpers ────────────────────────────────────────────────────
 
-  const hasData = client !== null && isAdmin === true && repoStates.length > 0
+  const hasData = client !== null && isAdmin === true
   const isBusy = connecting || loading || executing
 
   // Prepare repo summaries for the right panel

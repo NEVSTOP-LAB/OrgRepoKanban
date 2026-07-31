@@ -225,10 +225,26 @@ export class GithubClient {
 
   async listOrgSecrets(): Promise<OrgSecret[]> {
     try {
-      const result = await this.request<{ secrets: OrgSecret[]; total_count: number }>(
-        `/orgs/${encodeURIComponent(this.org)}/actions/secrets?per_page=100`,
-      )
-      return result.secrets ?? []
+      const allSecrets: OrgSecret[] = []
+      let page = 1
+      const perPage = 100
+
+      while (true) {
+        const result = await this.request<{ secrets: OrgSecret[]; total_count: number }>(
+          `/orgs/${encodeURIComponent(this.org)}/actions/secrets?per_page=${perPage}&page=${page}`,
+        )
+
+        const secrets = result.secrets ?? []
+        allSecrets.push(...secrets)
+
+        if (secrets.length < perPage || allSecrets.length >= (result.total_count ?? 0)) {
+          break
+        }
+
+        page++
+      }
+
+      return allSecrets
     } catch (error) {
       if ((error as { status?: number }).status === 404) {
         return []
@@ -240,10 +256,26 @@ export class GithubClient {
 
   async listRepoSecrets(repoName: string): Promise<RepoSecretInfo[]> {
     try {
-      const result = await this.request<{ secrets: RepoSecretInfo[]; total_count: number }>(
-        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/secrets?per_page=100`,
-      )
-      return result.secrets ?? []
+      const allSecrets: RepoSecretInfo[] = []
+      let page = 1
+      const perPage = 100
+
+      while (true) {
+        const result = await this.request<{ secrets: RepoSecretInfo[]; total_count: number }>(
+          `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/secrets?per_page=${perPage}&page=${page}`,
+        )
+
+        const secrets = result.secrets ?? []
+        allSecrets.push(...secrets)
+
+        if (secrets.length < perPage || allSecrets.length >= (result.total_count ?? 0)) {
+          break
+        }
+
+        page++
+      }
+
+      return allSecrets
     } catch (error) {
       if ((error as { status?: number }).status === 404) {
         return []
