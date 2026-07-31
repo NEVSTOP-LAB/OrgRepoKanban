@@ -287,17 +287,20 @@ export function SecretManager({ onBack }: SecretManagerProps) {
     setExecuting(true)
     setNotice({ tone: 'info', title: '正在执行 Secret 操作...' })
 
-    const succeeded: string[] = []
+    const succeededDescs: string[] = []
     const failed: Array<{ desc: string; error: string }> = []
+    const succeededIndices = new Set<number>()
 
-    for (const op of pendingOps) {
+    for (let i = 0; i < pendingOps.length; i++) {
+      const op = pendingOps[i]
       try {
         if (op.action === 'set') {
           await client.setRepoSecret(op.repoName, op.secretName, op.value)
         } else {
           await client.deleteRepoSecret(op.repoName, op.secretName)
         }
-        succeeded.push(formatPendingOp(op))
+        succeededDescs.push(formatPendingOp(op))
+        succeededIndices.add(i)
       } catch (error) {
         failed.push({
           desc: formatPendingOp(op),
@@ -324,34 +327,36 @@ export function SecretManager({ onBack }: SecretManagerProps) {
     setPendingOps([])
 
     // Clear secret values that were successfully written
-    const writtenSecrets = new Set<string>()
-    for (let i = 0; i < pendingOps.length; i++) {
-      if (i < succeeded.length) {
-        writtenSecrets.add(pendingOps[i].secretName)
-      }
-    }
-    if (writtenSecrets.size > 0) {
-      setSecretValues((prev) => {
-        const next = { ...prev }
-        for (const name of writtenSecrets) {
-          delete next[name]
+    if (succeededIndices.size > 0) {
+      const writtenSecrets = new Set<string>()
+      for (const i of succeededIndices) {
+        if (pendingOps[i].action === 'set') {
+          writtenSecrets.add(pendingOps[i].secretName)
         }
-        return next
-      })
+      }
+      if (writtenSecrets.size > 0) {
+        setSecretValues((prev) => {
+          const next = { ...prev }
+          for (const name of writtenSecrets) {
+            delete next[name]
+          }
+          return next
+        })
+      }
     }
 
     if (failed.length === 0) {
       setNotice({
         tone: 'success',
-        title: `全部 ${succeeded.length} 个 Secret 操作已完成。`,
-        description: succeeded.join('；'),
+        title: `全部 ${succeededDescs.length} 个 Secret 操作已完成。`,
+        description: succeededDescs.join('；'),
       })
     } else {
       setNotice({
         tone: 'warning',
-        title: `部分完成：成功 ${succeeded.length} 个，失败 ${failed.length} 个。`,
+        title: `部分完成：成功 ${succeededDescs.length} 个，失败 ${failed.length} 个。`,
         description: [
-          ...succeeded.map((s) => `✓ ${s}`),
+          ...succeededDescs.map((s) => `✓ ${s}`),
           ...failed.map((f) => `✗ ${f.desc}: ${f.error}`),
         ].join('\n'),
       })
