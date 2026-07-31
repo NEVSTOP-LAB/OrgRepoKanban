@@ -252,9 +252,12 @@ export function SecretManager({ onBack }: SecretManagerProps) {
     event.preventDefault()
     setDragOverSecret(null)
 
-    // Repo drag uses text/plain with repo name
-    const repoName = event.dataTransfer.getData('text/plain')
+    // Repo drag uses a custom type; validate against known repos
+    const repoName = event.dataTransfer.getData('application/x-repo-name')
     if (!repoName) return
+
+    // Validate repoName is a known private repo
+    if (!repoStates.some((rs) => rs.repo.name === repoName)) return
 
     const value = getSecretValue(secretName)
     if (!value) {
@@ -271,7 +274,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
 
   // Repo card drag start
   const onRepoDragStart = (event: React.DragEvent, repoName: string) => {
-    event.dataTransfer.setData('text/plain', repoName)
+    event.dataTransfer.setData('application/x-repo-name', repoName)
     event.dataTransfer.effectAllowed = 'link'
   }
 
@@ -320,6 +323,23 @@ export function SecretManager({ onBack }: SecretManagerProps) {
 
     setPendingOps([])
 
+    // Clear secret values that were successfully written
+    const writtenSecrets = new Set<string>()
+    for (let i = 0; i < pendingOps.length; i++) {
+      if (i < succeeded.length) {
+        writtenSecrets.add(pendingOps[i].secretName)
+      }
+    }
+    if (writtenSecrets.size > 0) {
+      setSecretValues((prev) => {
+        const next = { ...prev }
+        for (const name of writtenSecrets) {
+          delete next[name]
+        }
+        return next
+      })
+    }
+
     if (failed.length === 0) {
       setNotice({
         tone: 'success',
@@ -347,6 +367,14 @@ export function SecretManager({ onBack }: SecretManagerProps) {
 
   const handleRemoveOp = (index: number) => {
     setPendingOps((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  // Queue a delete operation for a secret on a repo (click × on tag)
+  const handleQueueDelete = (repoName: string, secretName: string) => {
+    const configured = getRepoConfiguredSecrets(repoName)
+    setPendingOps((prev) =>
+      addPendingOp(prev, repoName, secretName, '', configured),
+    )
   }
 
   // ── Render helpers ────────────────────────────────────────────────────
@@ -622,8 +650,22 @@ export function SecretManager({ onBack }: SecretManagerProps) {
                         <span className="repo-tag is-private">无 Secret</span>
                       ) : null}
                       {repo.configuredSecrets.map((s) => (
-                        <span key={s} className="repo-tag is-topic">
+                        <span key={s} className="repo-tag is-topic repo-tag-secret">
                           🔑 {s}
+                          <button
+                            type="button"
+                            className="repo-tag-remove"
+                            title={`从 ${repo.name} 移除 ${s}`}
+                            aria-label={`移除 ${s}`}
+                            disabled={isBusy}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleQueueDelete(repo.name, s)
+                            }}
+                            onDragStart={(e) => e.stopPropagation()}
+                          >
+                            ×
+                          </button>
                         </span>
                       ))}
                     </span>

@@ -582,6 +582,33 @@
   color: #198754;
 }
 
+.repo-tag-secret {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.repo-tag-remove {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 2px;
+  transition: opacity 0.14s ease, background 0.14s ease;
+}
+
+.repo-tag-remove:hover {
+  opacity: 1;
+  background: rgba(220, 53, 69, 0.15);
+  color: #dc3545;
+}
+
 .repo-card.selected {
   border-color: rgba(13, 110, 253, 0.6);
   background: rgba(13, 110, 253, 0.04);
