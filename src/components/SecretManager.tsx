@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { GithubClient } from '../github/client'
 import type { GithubRepo } from '../github/data'
@@ -74,9 +74,6 @@ export function SecretManager({ onBack }: SecretManagerProps) {
   // Drag highlight state
   const [dragOverRepo, setDragOverRepo] = useState<string | null>(null)
   const [dragOverSecret, setDragOverSecret] = useState<string | null>(null)
-
-  const opsRef = useRef<PendingSecretOp[]>([])
-  opsRef.current = pendingOps
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -552,7 +549,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
               onDragOver={(e) => {
                 e.preventDefault()
                 // Only accept repo→secret drops
-                if (e.dataTransfer.types.includes('text/plain')) {
+                if (e.dataTransfer.types.includes('application/x-repo-name')) {
                   e.dataTransfer.dropEffect = 'link'
                 }
               }}
