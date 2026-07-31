@@ -582,6 +582,39 @@
   color: #198754;
 }
 
+.repo-tag-secret {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.repo-tag-remove {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 2px;
+  transition: opacity 0.14s ease, background 0.14s ease;
+}
+
+.repo-tag-remove:hover,
+.repo-tag-remove:focus-visible {
+  opacity: 1;
+  background: rgba(220, 53, 69, 0.15);
+  color: #dc3545;
+}
+
+.repo-tag-remove:focus-visible {
+  outline: 2px solid rgba(13, 110, 253, 0.5);
+  outline-offset: 1px;
+}
+
 .repo-card.selected {
   border-color: rgba(13, 110, 253, 0.6);
   background: rgba(13, 110, 253, 0.04);
@@ -680,6 +713,360 @@
   50% { opacity: 0.7; }
 }
 
+/* ── Home navigation grid ─────────────────────────────────────────────── */
+
+.home-nav-panel {
+  padding: 20px 24px;
+}
+
+.home-nav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.home-nav-card {
+  appearance: none;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
+  padding: 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.home-nav-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+  border-color: rgba(13, 110, 253, 0.25);
+}
+
+.home-nav-card:focus-visible {
+  outline: 2px solid rgba(13, 110, 253, 0.5);
+  outline-offset: 2px;
+}
+
+.home-nav-icon {
+  font-size: 36px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.625rem;
+  background: linear-gradient(135deg, rgba(13, 110, 253, 0.06), rgba(102, 16, 242, 0.04));
+}
+
+.home-nav-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home-nav-body h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.home-nav-body p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.home-nav-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* ── Back navigation ──────────────────────────────────────────────────── */
+
+.back-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.back-nav-button {
+  appearance: none;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0.375rem;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--ink-soft);
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.back-nav-button:hover {
+  background: rgba(13, 110, 253, 0.06);
+  color: var(--accent);
+  border-color: rgba(13, 110, 253, 0.18);
+}
+
+/* ── Secret Manager ───────────────────────────────────────────────────── */
+
+.secret-board-panel {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.45fr) minmax(360px, 0.55fr);
+  gap: 12px;
+}
+
+.secret-column {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(14px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.secret-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.01);
+}
+
+.secret-column-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.secret-column-header span {
+  min-width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(13, 110, 253, 0.08);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.secret-column-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 120px;
+  max-height: 480px;
+}
+
+.secret-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+/* Secret card (left panel) */
+.secret-card {
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+  cursor: grab;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.secret-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 16, 242, 0.08);
+  border-color: rgba(102, 16, 242, 0.2);
+}
+
+.secret-card.drag-over {
+  background: rgba(102, 16, 242, 0.06);
+  border-color: rgba(102, 16, 242, 0.35);
+  box-shadow: 0 4px 16px rgba(102, 16, 242, 0.12);
+}
+
+.secret-card:active {
+  cursor: grabbing;
+}
+
+.secret-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.secret-card-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.secret-value-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.secret-value-input {
+  flex: 1;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 0.25rem;
+  padding: 5px 8px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--ink);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.secret-value-input:focus {
+  outline: none;
+  border-color: rgba(102, 16, 242, 0.5);
+  box-shadow: 0 0 0 3px rgba(102, 16, 242, 0.1);
+}
+
+.secret-value-clear {
+  appearance: none;
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--ink-muted);
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 140ms ease;
+}
+
+.secret-value-clear:hover {
+  background: rgba(220, 53, 69, 0.15);
+  color: #dc3545;
+}
+
+.secret-card-hint {
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+/* Repo card (right panel) */
+.repo-secret-card {
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 0.375rem;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+  cursor: grab;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.repo-secret-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(13, 110, 253, 0.08);
+  border-color: rgba(13, 110, 253, 0.2);
+}
+
+.repo-secret-card.drag-over {
+  background: rgba(13, 110, 253, 0.06);
+  border-color: rgba(13, 110, 253, 0.35);
+  box-shadow: 0 4px 16px rgba(13, 110, 253, 0.12);
+}
+
+.repo-secret-card:active {
+  cursor: grabbing;
+}
+
+/* Pending operations panel */
+.pending-panel {
+  margin-top: 4px;
+}
+
+.pending-ops-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pending-op-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 0.375rem;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  font-size: 13px;
+  transition: background 0.15s ease;
+}
+
+.pending-op-item:hover {
+  background: rgba(13, 110, 253, 0.03);
+}
+
+.pending-op-desc {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.pending-op-remove {
+  appearance: none;
+  border: none;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ink-muted);
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.pending-op-remove:hover {
+  background: rgba(220, 53, 69, 0.12);
+  color: #dc3545;
+}
+
+.pending-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+
 @media (max-width: 960px) {
   .app-shell {
     padding: 16px;
@@ -723,6 +1110,14 @@
 
   .permission-board {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .secret-board-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .secret-column-body {
+    max-height: 320px;
   }
 }
 

@@ -13,6 +13,7 @@
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "libsodium-wrappers": "^0.8.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
@@ -21,6 +22,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/libsodium-wrappers": "^0.7.14",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
