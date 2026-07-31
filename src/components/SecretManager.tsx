@@ -215,6 +215,12 @@ export function SecretManager({ onBack }: SecretManagerProps) {
   // ── Drag & Drop ───────────────────────────────────────────────────────
 
   const onSecretDragStart = (event: React.DragEvent, secretName: string) => {
+    const value = getSecretValue(secretName)
+    if (!value) {
+      event.preventDefault()
+      return
+    }
+
     const payload: DragPayload = { kind: 'secret', secretName }
     event.dataTransfer.setData('application/json', JSON.stringify(payload))
     event.dataTransfer.effectAllowed = 'link'
@@ -229,6 +235,11 @@ export function SecretManager({ onBack }: SecretManagerProps) {
     if (!payload || payload.kind !== 'secret') return
 
     const value = getSecretValue(payload.secretName)
+    if (!value) {
+      setNotice({ tone: 'warning', title: `请先为 Secret「${payload.secretName}」输入值再拖拽。` })
+      return
+    }
+
     const configured = getRepoConfiguredSecrets(repoName)
 
     setPendingOps((prev) =>
@@ -246,6 +257,11 @@ export function SecretManager({ onBack }: SecretManagerProps) {
     if (!repoName) return
 
     const value = getSecretValue(secretName)
+    if (!value) {
+      setNotice({ tone: 'warning', title: `请先为 Secret「${secretName}」输入值再接受仓库拖拽。` })
+      return
+    }
+
     const configured = getRepoConfiguredSecrets(repoName)
 
     setPendingOps((prev) =>
@@ -515,7 +531,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
                 <div
                   key={secret.name}
                   className={`secret-card${dragOverSecret === secret.name ? ' drag-over' : ''}`}
-                  draggable={!isBusy}
+                  draggable={!isBusy && secret.userValue.length > 0}
                   onDragStart={(e) => onSecretDragStart(e, secret.name)}
                   onDragOver={(e) => {
                     e.preventDefault()
