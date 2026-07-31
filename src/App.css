@@ -1005,6 +1005,12 @@
   border-color: rgba(13, 110, 253, 0.3);
 }
 
+.repo-secret-card.selected.drag-over {
+  background: rgba(13, 110, 253, 0.06);
+  border-color: rgba(13, 110, 253, 0.35);
+  box-shadow: 0 4px 16px rgba(13, 110, 253, 0.12);
+}
+
 .repo-secret-card:active {
   cursor: grabbing;
 }
