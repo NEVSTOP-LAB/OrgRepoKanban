@@ -8,6 +8,8 @@ import type {
   RepoCollaboratorAccess,
   RepoTeamAccess,
 } from './data'
+import type { OrgSecret, RepoSecretInfo } from '../domain/secret'
+import { encryptSecret } from './secrets'
 
 export interface HttpError extends Error {
   status: number
@@ -213,6 +215,76 @@ export class GithubClient {
   async removeUserRepoPermission(repoName: string, userLogin: string): Promise<void> {
     await this.requestVoid(
       `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/collaborators/${encodeURIComponent(userLogin)}`,
+      {
+        method: 'DELETE',
+      },
+    )
+  }
+
+  // ── Actions secrets ────────────────────────────────────────────────────
+
+  async listOrgSecrets(): Promise<OrgSecret[]> {
+    try {
+      const result = await this.request<{ secrets: OrgSecret[]; total_count: number }>(
+        `/orgs/${encodeURIComponent(this.org)}/actions/secrets?per_page=100`,
+      )
+      return result.secrets ?? []
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) {
+        return []
+      }
+
+      throw error
+    }
+  }
+
+  async listRepoSecrets(repoName: string): Promise<RepoSecretInfo[]> {
+    try {
+      const result = await this.request<{ secrets: RepoSecretInfo[]; total_count: number }>(
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/secrets?per_page=100`,
+      )
+      return result.secrets ?? []
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) {
+        return []
+      }
+
+      throw error
+    }
+  }
+
+  async getRepoPublicKey(repoName: string): Promise<{ key_id: string; key: string }> {
+    return this.request<{ key_id: string; key: string }>(
+      `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/secrets/public-key`,
+    )
+  }
+
+  async setRepoSecret(
+    repoName: string,
+    secretName: string,
+    plaintextValue: string,
+  ): Promise<void> {
+    const publicKey = await this.getRepoPublicKey(repoName)
+    const encrypted = await encryptSecret(plaintextValue, publicKey.key)
+
+    await this.requestVoid(
+      `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/secrets/${encodeURIComponent(secretName)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          encrypted_value: encrypted,
+          key_id: publicKey.key_id,
+        }),
+      },
+    )
+  }
+
+  async deleteRepoSecret(
+    repoName: string,
+    secretName: string,
+  ): Promise<void> {
+    await this.requestVoid(
+      `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/secrets/${encodeURIComponent(secretName)}`,
       {
         method: 'DELETE',
       },
