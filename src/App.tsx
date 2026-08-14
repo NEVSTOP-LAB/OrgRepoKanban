@@ -116,12 +116,12 @@ const INHERITED_FILTER_PRESETS: Array<{ key: InheritedFilter; label: string; ico
   { key: 'direct-only', label: '直接', icon: '⤴' },
 ]
 
-function App() {
-  const [token, setToken] = useState('')
-  const [org, setOrg] = useState('')
-  const [client, setClient] = useState<GithubClient | null>(null)
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
-  const [connecting, setConnecting] = useState(false)
+export interface AppProps {
+  client: GithubClient
+  org: string
+}
+
+function App({ client, org }: AppProps) {
   const [refreshing, setRefreshing] = useState(false)
   const [_subjectLoading, setSubjectLoading] = useState(false)
   const [_loadingProgress, setLoadingProgress] = useState<{ completed: number; total: number } | null>(null)
@@ -236,7 +236,7 @@ function App() {
         ? userTeamPermissions[selectedUser] ?? null
         : null
 
-  const hasConnectedData = repos.length > 0 && isAdmin === true
+  const hasConnectedData = repos.length > 0
 
   const updateSubjectPermissions = (
     subject: PermissionSubject,
@@ -357,18 +357,7 @@ function App() {
     }
   }
 
-  const connectOrganization = async (isRefresh = false) => {
-    const trimmedToken = token.trim()
-    const trimmedOrg = org.trim()
-
-    if (!trimmedToken || !trimmedOrg) {
-      setNotice({
-        tone: 'warning',
-        title: '请先填写个人访问令牌和组织名称。',
-      })
-      return
-    }
-
+  const loadOrganization = async (isRefresh = false) => {
     setNotice(null)
     setSelectedRepos(new Set())
     setFilterQuery('')
@@ -376,38 +365,13 @@ function App() {
     setInheritedFilter('all')
     if (isRefresh) {
       setRefreshing(true)
-    } else {
-      setConnecting(true)
     }
 
-    const nextClient = new GithubClient(trimmedToken, trimmedOrg)
-
     try {
-      const admin = await nextClient.verifyOrgAdmin()
-      setIsAdmin(admin)
-
-      if (!admin) {
-        setClient(null)
-        setRepos([])
-        setTeamOptions([])
-        setTeamPermissions({})
-        setUsers([])
-        setUserPermissions({})
-        setUserTeamPermissions({})
-        setSelectedTeam('')
-        setSelectedUser('')
-        setNotice({
-          tone: 'warning',
-          title: '当前令牌不是该组织管理员，无法执行权限修改。',
-          description: '请使用具备 admin:org 和 repo 权限的组织管理员令牌重新连接。',
-        })
-        return
-      }
-
       const [repoList, teams, members] = await Promise.all([
-        nextClient.listOrgRepos(),
-        nextClient.listTeams(),
-        nextClient.listOrgMembers(),
+        client.listOrgRepos(),
+        client.listTeams(),
+        client.listOrgMembers(),
       ])
 
       const flattenedTeams = flattenTeamTree(buildTeamTreeOptions(teams))
@@ -417,7 +381,6 @@ function App() {
         ? (isRefresh ? subjectKind : 'team')
         : 'user'
 
-      setClient(nextClient)
       setRepos(repoList)
       setTeamOptions(flattenedTeams)
       setTeamPermissions({})
@@ -431,7 +394,7 @@ function App() {
       // Load team permissions first so the board shows immediately
       if (nextSubjectKind === 'team' && defaultTeam) {
         setSubjectLoading(true)
-        const teamRepoPermissions = await nextClient.listTeamRepos(defaultTeam)
+        const teamRepoPermissions = await client.listTeamRepos(defaultTeam)
         setTeamPermissions({
           [defaultTeam]: toPermissionMap(repoList, teamRepoPermissions),
         })
@@ -439,15 +402,14 @@ function App() {
       }
 
       // Start progressive tag loading in background – don't await
-      void loadRepoTags(nextClient, repoList)
+      void loadRepoTags(client, repoList)
 
       setNotice({
         tone: 'success',
-        title: `已连接组织 ${trimmedOrg}`,
-        description: '当前页面仅在内存中持有令牌和组织名称，刷新页面后即失效。',
+        title: [`已连接组织 `, org].join(''),
+        description: '凭据由首页统一管理，本页面直接复用共享连接。',
       })
     } catch (error) {
-      setClient(null)
       setRepos([])
       setTeamOptions([])
       setTeamPermissions({})
@@ -456,18 +418,26 @@ function App() {
       setUserTeamPermissions({})
       setSelectedTeam('')
       setSelectedUser('')
-      setIsAdmin(null)
       setNotice({
         tone: 'error',
         title: '连接 GitHub 失败。',
         description: formatError(error, '请检查令牌权限、组织名称或网络连接。'),
       })
     } finally {
-      setConnecting(false)
       setRefreshing(false)
       setSubjectLoading(false)
     }
   }
+
+  // 首次挂载自动加载；用宏任务触发避免 effect 内同步级联 setState
+  /* eslint-disable react-hooks/exhaustive-deps -- loadOrganization 依赖多个易变状态，仅在 client 变化时触发一次 */
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadOrganization(false)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [client])
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   useEffect(() => {
     if (!client || subjectKind !== 'team' || !selectedTeam || repos.length === 0) {
@@ -622,14 +592,6 @@ function App() {
       return
     }
 
-    if (!isAdmin) {
-      setNotice({
-        tone: 'warning',
-        title: '当前令牌没有管理员权限，不能修改授权。',
-      })
-      return
-    }
-
     const subject =
       subjectKind === 'team'
         ? selectedTeam
@@ -666,7 +628,7 @@ function App() {
     })
   }
 
-  const isBusy = connecting || refreshing
+  const isBusy = refreshing
 
   return (
     <main className="app-shell">
@@ -701,141 +663,81 @@ function App() {
       </section>
 
       <section className="control-panel">
-        {!hasConnectedData ? (
-          <>
-            <div className="section-title">
-              <h2>认证与主体</h2>
-            </div>
+        <div className="connected-bar">
+          <span className="org-label">{org}</span>
 
-            <div className="connect-row">
-              <div className="field connect-field">
-                <label htmlFor="org-input">组织</label>
-                <input
-                  id="org-input"
-                  aria-label="组织名称"
-                  name="username"
-                  type="text"
-                  value={org}
-                  autoComplete="username"
-                  placeholder="your-org"
-                  onChange={(event) => setOrg(event.target.value)}
-                />
-              </div>
+          <div className="field inline-field">
+            <select
+              id="subject-kind"
+              aria-label="主体类型"
+              value={subjectKind}
+              onChange={(event) => setSubjectKind(event.target.value as SubjectKind)}
+            >
+              <option value="team">团队</option>
+              <option value="user">个人协作者</option>
+            </select>
+          </div>
 
-              <div className="field connect-field">
-                <label htmlFor="token-input">令牌</label>
-                <input
-                  id="token-input"
-                  aria-label="个人访问令牌"
-                  name="current-password"
-                  type="password"
-                  value={token}
-                  autoComplete="current-password"
-                  placeholder="ghp_xxx"
-                  onChange={(event) => setToken(event.target.value)}
-                />
-              </div>
-
-              <button
-                type="button"
-                className="primary-button"
-                disabled={connecting || writing}
-                onClick={() => { void connectOrganization(false) }}
+          {subjectKind === 'team' ? (
+            <div className="field inline-field">
+              <select
+                id="team-select"
+                aria-label="团队选择"
+                value={selectedTeam}
+                onChange={(event) => setSelectedTeam(event.target.value)}
               >
-                {connecting ? '连接中...' : '连接组织'}
-              </button>
-            </div>
-
-            {notice ? (
-              <div className={`status-banner ${notice.tone}`} role="status">
-                <strong>{notice.title}</strong>
-                {notice.description ? <span>{notice.description}</span> : null}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <div className="connected-bar">
-              <span className="org-label">{org}</span>
-
-              <div className="field inline-field">
-                <select
-                  id="subject-kind"
-                  aria-label="主体类型"
-                  value={subjectKind}
-                  onChange={(event) => setSubjectKind(event.target.value as SubjectKind)}
-                >
-                  <option value="team">团队</option>
-                  <option value="user">个人协作者</option>
-                </select>
-              </div>
-
-              {subjectKind === 'team' ? (
-                <div className="field inline-field">
-                  <select
-                    id="team-select"
-                    aria-label="团队选择"
-                    value={selectedTeam}
-                    onChange={(event) => setSelectedTeam(event.target.value)}
-                  >
-                    {teamOptions.length === 0 ? (
-                      <option value="">无团队</option>
-                    ) : null}
-                    {teamOptions.map((option) => (
-                      <option key={option.team.id} value={option.team.slug}>
-                        {formatTeamOption(option)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="field inline-field">
-                  <select
-                    id="user-select"
-                    aria-label="个人协作者"
-                    value={selectedUser}
-                    onChange={(event) => setSelectedUser(event.target.value)}
-                  >
-                    {users.length === 0 ? (
-                      <option value="">无成员</option>
-                    ) : null}
-                    {users.map((user) => (
-                      <option key={user.login} value={user.login}>
-                        {user.login}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <span className="stat-badge">仓库 {repos.length}</span>
-              <span className="stat-badge">团队 {teamOptions.length}</span>
-              <span className="stat-badge">成员 {users.length}</span>
-
-              <div className="connected-actions">
-                <button
-                  type="button"
-                  className="ghost-button"
-                  disabled={refreshing || writing}
-                  onClick={() => { void connectOrganization(true) }}
-                >
-                  {refreshing ? '刷新中...' : '刷新'}
-                </button>
-
-                {isAdmin !== true && isAdmin !== null ? (
-                  <span className="readonly-tip">无管理员权限</span>
+                {teamOptions.length === 0 ? (
+                  <option value="">无团队</option>
                 ) : null}
-              </div>
+                {teamOptions.map((option) => (
+                  <option key={option.team.id} value={option.team.slug}>
+                    {formatTeamOption(option)}
+                  </option>
+                ))}
+              </select>
             </div>
+          ) : (
+            <div className="field inline-field">
+              <select
+                id="user-select"
+                aria-label="个人协作者"
+                value={selectedUser}
+                onChange={(event) => setSelectedUser(event.target.value)}
+              >
+                {users.length === 0 ? (
+                  <option value="">无成员</option>
+                ) : null}
+                {users.map((user) => (
+                  <option key={user.login} value={user.login}>
+                    {user.login}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-            {notice ? (
-              <div className={`status-banner ${notice.tone}`} role="status">
-                <strong>{notice.title}</strong>
-                {notice.description ? <span>{notice.description}</span> : null}
-              </div>
-            ) : null}
-          </>
-        )}
+          <span className="stat-badge">仓库 {repos.length}</span>
+          <span className="stat-badge">团队 {teamOptions.length}</span>
+          <span className="stat-badge">成员 {users.length}</span>
+
+          <div className="connected-actions">
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={refreshing || writing}
+              onClick={() => { void loadOrganization(true) }}
+            >
+              {refreshing ? '刷新中...' : '刷新'}
+            </button>
+          </div>
+        </div>
+
+        {notice ? (
+          <div className={`status-banner ${notice.tone}`} role="status">
+            <strong>{notice.title}</strong>
+            {notice.description ? <span>{notice.description}</span> : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="board-panel">
@@ -922,7 +824,7 @@ function App() {
               inheritedFilter={inheritedFilter}
               parentPermissionByRepo={currentParentPermissionMap}
               selectedRepos={selectedRepos}
-              interactive={isAdmin === true && !isBusy}
+              interactive={!isBusy}
               onToggleSelect={(repoName, additive) => {
                 setSelectedRepos((previous) => toggleSelection(previous, repoName, additive))
               }}
@@ -933,8 +835,8 @@ function App() {
           </>
         ) : (
           <div className="empty-state">
-            <strong>先完成组织连接，再拖拽管理权限。</strong>
-            <span>仅组织管理员令牌可用。</span>
+            <strong>正在从组织加载数据…</strong>
+            <span>连接凭据由首页统一管理。</span>
           </div>
         )}
       </section>

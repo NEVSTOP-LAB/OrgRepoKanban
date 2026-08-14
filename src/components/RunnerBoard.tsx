@@ -51,16 +51,12 @@ function formatError(error: unknown, fallback: string): string {
 // ── 组件 ─────────────────────────────────────────────────────────────────
 
 export interface RunnerBoardProps {
+  client: GithubClient
+  org: string
   onBack: () => void
 }
 
-export function RunnerBoard({ onBack }: RunnerBoardProps) {
-  // 连接状态
-  const [token, setToken] = useState('')
-  const [org, setOrg] = useState('')
-  const [client, setClient] = useState<GithubClient | null>(null)
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
-  const [connecting, setConnecting] = useState(false)
+export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const [refreshing, setRefreshing] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
 
@@ -158,8 +154,8 @@ export function RunnerBoard({ onBack }: RunnerBoardProps) {
       if (announce && epoch === scanEpochRef.current) {
         setNotice({
           tone: 'success',
-          title: '已连接并完成首次扫描。',
-          description: '页面仅在内存中持有令牌与组织名称，刷新页面后即失效。',
+          title: '已完成首次扫描。',
+          description: '凭据由首页统一管理，本页面复用共享连接。',
         })
       }
     } catch (error) {
@@ -176,52 +172,18 @@ export function RunnerBoard({ onBack }: RunnerBoardProps) {
     }
   }, [scanQueued])
 
-  // ── 连接 ─────────────────────────────────────────────────────────────
+  // ── 首次加载与自动刷新 ─────────────────────────────────────────────
 
-  const connectOrg = async () => {
-    const trimmedToken = token.trim()
-    const trimmedOrg = org.trim()
-
-    if (!trimmedToken || !trimmedOrg) {
-      setNotice({ tone: 'warning', title: '请先填写个人访问令牌和组织名称。' })
-      return
-    }
-
-    setNotice(null)
-    setConnecting(true)
-    const nextClient = new GithubClient(trimmedToken, trimmedOrg)
-
-    try {
-      const admin = await nextClient.verifyOrgAdmin()
-      setIsAdmin(admin)
-
-      if (!admin) {
-        setClient(null)
-        setNotice({
-          tone: 'warning',
-          title: '当前令牌不是该组织管理员，无法查看 Runner 与队列。',
-          description: '请使用具备 admin:org 与 repo 权限的组织管理员令牌重新连接。',
-        })
-        return
-      }
-
-      setClient(nextClient)
-      void loadAll(nextClient, true)
-    } catch (error) {
-      setNotice({
-        tone: 'error',
-        title: '连接组织失败。',
-        description: formatError(error, '请检查令牌权限、组织名称或网络连接。'),
-      })
-    } finally {
-      setConnecting(false)
-    }
-  }
-
-  // ── 自动刷新 ─────────────────────────────────────────────────────────
+  // 首次挂载自动加载；用宏任务触发避免 effect 内同步级联 setState
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadAll(client, true)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [client, loadAll])
 
   useEffect(() => {
-    if (!client || autoRefreshSeconds <= 0) {
+    if (autoRefreshSeconds <= 0) {
       return
     }
 
@@ -256,7 +218,6 @@ export function RunnerBoard({ onBack }: RunnerBoardProps) {
     ? queuedRuns.filter((run) => matchesRunFilter(run, filterQuery))
     : queuedRuns
   const longestWait = longestWaitMs(filteredRuns, now)
-  const connected = client !== null
 
   // ── 渲染 ─────────────────────────────────────────────────────────────
 
@@ -299,79 +260,44 @@ export function RunnerBoard({ onBack }: RunnerBoardProps) {
       </section>
 
       <section className="control-panel">
-        {!connected ? (
-          <div className="connect-row">
-            <div className="connect-field field">
-              <label htmlFor="runner-pat">个人访问令牌（PAT）</label>
-              <input
-                id="runner-pat"
-                type="password"
-                value={token}
-                placeholder="ghp_..."
-                onChange={(event) => setToken(event.target.value)}
-              />
-            </div>
-            <div className="connect-field field">
-              <label htmlFor="runner-org">组织名称</label>
-              <input
-                id="runner-org"
-                type="text"
-                value={org}
-                placeholder="例如 nevstop-lab"
-                onChange={(event) => setOrg(event.target.value)}
-              />
-            </div>
+        <div className="connected-bar">
+          <span className="org-label">{org.trim()}</span>
+          <span className="stat-badge">{repos.length} 个仓库</span>
+          <label className="scan-toggle">
+            <input
+              type="checkbox"
+              checked={recentOnly}
+              onChange={(event) => {
+                const checked = event.target.checked
+                recentOnlyRef.current = checked
+                setRecentOnly(checked)
+                void loadAll(client, false)
+              }}
+            />
+            仅扫描 24 小时内有推送的仓库
+          </label>
+          <select
+            className="auto-refresh-select"
+            value={autoRefreshSeconds}
+            onChange={(event) => setAutoRefreshSeconds(Number(event.target.value))}
+          >
+            {AUTO_REFRESH_OPTIONS.map((option) => (
+              <option key={option.seconds} value={option.seconds}>
+                自动刷新：{option.label}
+              </option>
+            ))}
+          </select>
+          <div className="connected-actions">
             <button
               type="button"
-              className="primary-button"
-              disabled={connecting}
-              onClick={() => void connectOrg()}
+              className="ghost-button"
+              disabled={refreshing}
+              onClick={() => void loadAll(client, false)}
             >
-              {connecting ? '连接中…' : '连接组织'}
+              {refreshing ? '刷新中…' : '刷新'}
             </button>
           </div>
-        ) : (
-          <div className="connected-bar">
-            <span className="org-label">{org.trim()}</span>
-            <span className="stat-badge">{repos.length} 个仓库</span>
-            <label className="scan-toggle">
-              <input
-                type="checkbox"
-                checked={recentOnly}
-                onChange={(event) => {
-                  const checked = event.target.checked
-                  recentOnlyRef.current = checked
-                  setRecentOnly(checked)
-                  if (client) {
-                    void loadAll(client, false)
-                  }
-                }}
-              />
-              仅扫描 24 小时内有推送的仓库
-            </label>
-            <select
-              className="auto-refresh-select"
-              value={autoRefreshSeconds}
-              onChange={(event) => setAutoRefreshSeconds(Number(event.target.value))}
-            >
-              {AUTO_REFRESH_OPTIONS.map((option) => (
-                <option key={option.seconds} value={option.seconds}>
-                  自动刷新：{option.label}
-                </option>
-              ))}
-            </select>
-            <div className="connected-actions">
-              <button
-                type="button"
-                className="ghost-button"
-                disabled={refreshing}
-                onClick={() => client && void loadAll(client, false)}
-              >
-                {refreshing ? '刷新中…' : '刷新'}
-              </button>
-            </div>
-          </div>
-        )}
+        </div>
 
         {notice && (
           <div className={`status-banner ${notice.tone}`}>
@@ -379,18 +305,9 @@ export function RunnerBoard({ onBack }: RunnerBoardProps) {
             {notice.description && <span>{notice.description}</span>}
           </div>
         )}
-
-        {isAdmin === false && client === null && (
-          <div className="status-banner warning">
-            <strong>无管理员权限</strong>
-            <span>请更换具备 admin:org 与 repo 权限的令牌后重新连接。</span>
-          </div>
-        )}
       </section>
 
-      {connected && (
-        <>
-          {/* ── Runner 看板 ── */}
+      {/* ── Runner 看板 ── */}
           <section className="board-panel runner-board-panel">
             <div className="section-title">
               <h2>🏃 自托管 Runner 池</h2>
@@ -624,9 +541,7 @@ export function RunnerBoard({ onBack }: RunnerBoardProps) {
                 })}
               </ol>
             )}
-          </section>
-        </>
-      )}
+      </section>
     </main>
   )
 }

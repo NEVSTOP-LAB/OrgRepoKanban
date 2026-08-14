@@ -752,6 +752,19 @@
   outline-offset: 2px;
 }
 
+.home-nav-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  filter: grayscale(0.4);
+  transform: none;
+}
+
+.home-nav-card:disabled:hover {
+  transform: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
 .home-nav-icon {
   font-size: 36px;
   line-height: 1;
