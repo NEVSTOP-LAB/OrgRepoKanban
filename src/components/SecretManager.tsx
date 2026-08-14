@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { GithubClient } from '../github/client'
 import type { GithubRepo } from '../github/data'
@@ -47,16 +47,12 @@ function parseDragPayload(dataTransfer: DataTransfer): DragPayload | null {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export interface SecretManagerProps {
+  client: GithubClient
+  org: string
   onBack: () => void
 }
 
-export function SecretManager({ onBack }: SecretManagerProps) {
-  // Connection state
-  const [token, setToken] = useState('')
-  const [org, setOrg] = useState('')
-  const [client, setClient] = useState<GithubClient | null>(null)
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
-  const [connecting, setConnecting] = useState(false)
+export function SecretManager({ client, org, onBack }: SecretManagerProps) {
   const [notice, setNotice] = useState<Notice | null>(null)
 
   // Data state
@@ -101,50 +97,9 @@ export function SecretManager({ onBack }: SecretManagerProps) {
 
   const clearNotice = () => setNotice(null)
 
-  // ── Connection ────────────────────────────────────────────────────────
+  // ── 数据加载 ─────────────────────────────────────────────────────────
 
-  const connectOrg = async () => {
-    const trimmedToken = token.trim()
-    const trimmedOrg = org.trim()
-
-    if (!trimmedToken || !trimmedOrg) {
-      setNotice({ tone: 'warning', title: '请先填写个人访问令牌和组织名称。' })
-      return
-    }
-
-    clearNotice()
-    setConnecting(true)
-
-    const nextClient = new GithubClient(trimmedToken, trimmedOrg)
-
-    try {
-      const admin = await nextClient.verifyOrgAdmin()
-      setIsAdmin(admin)
-
-      if (!admin) {
-        setClient(null)
-        setNotice({
-          tone: 'warning',
-          title: '当前令牌不是该组织管理员，无法管理 Secret。',
-          description: '请使用具备 admin:org 和 repo 权限的组织管理员令牌。',
-        })
-        return
-      }
-
-      setClient(nextClient)
-      await loadData(nextClient)
-    } catch (error) {
-      setNotice({
-        tone: 'error',
-        title: '连接组织失败。',
-        description: error instanceof Error ? error.message : '未知错误',
-      })
-    } finally {
-      setConnecting(false)
-    }
-  }
-
-  const loadData = async (activeClient: GithubClient) => {
+  const loadData = useCallback(async (activeClient: GithubClient) => {
     setLoading(true)
     setRepoStates([])
     setSelectedRepos(new Set())
@@ -198,7 +153,15 @@ export function SecretManager({ onBack }: SecretManagerProps) {
       setLoading(false)
       setLoadingTotal(0)
     }
-  }
+  }, [])
+
+  // 首次挂载自动加载；用宏任务触发避免 effect 内同步级联 setState
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadData(client)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [client, loadData])
 
   // ── Secret value management ───────────────────────────────────────────
 
@@ -441,8 +404,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
 
   // ── Render helpers ────────────────────────────────────────────────────
 
-  const hasData = client !== null && isAdmin === true
-  const isBusy = connecting || loading || executing
+  const isBusy = loading || executing
 
   // Prepare repo summaries for the right panel
   const repoSummaries = repoStates.map((rs) => ({
@@ -500,92 +462,36 @@ export function SecretManager({ onBack }: SecretManagerProps) {
         </div>
       </section>
 
-      {/* Connection / Toolbar */}
+      {/* 共享连接工具栏 */}
       <section className="control-panel">
-        {!hasData ? (
-          <>
-            <div className="section-title">
-              <h2>连接组织</h2>
-            </div>
+        <div className="connected-bar">
+          <span className="org-label">{org}</span>
+          <span className="stat-badge">
+            Secret {orgSecrets.length}
+          </span>
+          <span className="stat-badge">
+            私有仓库 {repoStates.length}
+          </span>
+          <span className="stat-badge">
+            待执行 {pendingOps.length}
+          </span>
 
-            <div className="connect-row">
-              <div className="field connect-field">
-                <label htmlFor="secret-org-input">组织</label>
-                <input
-                  id="secret-org-input"
-                  aria-label="组织名称"
-                  name="username"
-                  type="text"
-                  value={org}
-                  autoComplete="username"
-                  placeholder="your-org"
-                  onChange={(e) => setOrg(e.target.value)}
-                />
-              </div>
-
-              <div className="field connect-field">
-                <label htmlFor="secret-token-input">令牌</label>
-                <input
-                  id="secret-token-input"
-                  aria-label="个人访问令牌"
-                  name="current-password"
-                  type="password"
-                  value={token}
-                  autoComplete="current-password"
-                  placeholder="ghp_xxx"
-                  onChange={(e) => setToken(e.target.value)}
-                />
-              </div>
-
-              <button
-                type="button"
-                className="primary-button"
-                disabled={connecting}
-                onClick={() => { void connectOrg() }}
-              >
-                {connecting ? '连接中...' : '连接组织'}
-              </button>
-            </div>
-
-            {notice ? (
-              <div className={`status-banner ${notice.tone}`} role="status">
-                <strong>{notice.title}</strong>
-                {notice.description ? <span>{notice.description}</span> : null}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="connected-bar">
-            <span className="org-label">{org}</span>
-            <span className="stat-badge">
-              Secret {orgSecrets.length}
-            </span>
-            <span className="stat-badge">
-              私有仓库 {repoStates.length}
-            </span>
-            <span className="stat-badge">
-              待执行 {pendingOps.length}
-            </span>
-
-            <div className="connected-actions">
-              <button
-                type="button"
-                className="ghost-button"
-                disabled={loading || executing}
-                onClick={() => {
-                  if (client) {
-                    setPendingOps([])
-                    void loadData(client)
-                  }
-                }}
-              >
-                {loading ? '刷新中...' : '刷新'}
-              </button>
-            </div>
+          <div className="connected-actions">
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={loading || executing}
+              onClick={() => {
+                setPendingOps([])
+                void loadData(client)
+              }}
+            >
+              {loading ? '刷新中...' : '刷新'}
+            </button>
           </div>
-        )}
+        </div>
 
-        {notice && hasData ? (
+        {notice ? (
           <div className={`status-banner ${notice.tone}`} role="status">
             <strong>{notice.title}</strong>
             {notice.description ? (
@@ -596,8 +502,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
       </section>
 
       {/* Two-column drag area */}
-      {hasData ? (
-        <section className="secret-board-panel">
+      <section className="secret-board-panel">
           {/* ── Left: Org Secrets ───────────────────────────────────── */}
           <div className="secret-column secret-left">
             <div className="secret-column-header">
@@ -769,19 +674,10 @@ export function SecretManager({ onBack }: SecretManagerProps) {
               ))}
             </div>
           </div>
-        </section>
-      ) : (
-        <section className="board-panel">
-          <div className="empty-state">
-            <strong>先连接组织，再管理 Secret。</strong>
-            <span>仅组织管理员令牌可用。</span>
-          </div>
-        </section>
-      )}
+      </section>
 
       {/* ── Bottom: Pending Operations ──────────────────────────────── */}
-      {hasData && (
-        <section className="control-panel pending-panel">
+      <section className="control-panel pending-panel">
           <div className="section-title">
             <h2>待执行操作</h2>
             <p>
@@ -833,8 +729,7 @@ export function SecretManager({ onBack }: SecretManagerProps) {
               </div>
             </>
           ) : null}
-        </section>
-      )}
+      </section>
     </main>
   )
 }

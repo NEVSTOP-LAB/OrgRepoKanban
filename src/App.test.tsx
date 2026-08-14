@@ -2,6 +2,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
+import { GithubClient } from './github/client'
+
+function renderConnectedApp() {
+  return render(<App client={new GithubClient('token-value', 'acme')} org="acme" />)
+}
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -81,18 +86,19 @@ describe('App', () => {
   })
 
   it('shows security note that PAT and organization are not persisted', () => {
-    render(<App />)
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    renderConnectedApp()
     expect(screen.getByText('PAT 与组织名仅存内存中，可由浏览器密码管理器保存。')).toBeInTheDocument()
   })
 
   it('loads admin board and displays default team permissions', async () => {
     fetchMock
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ role: 'admin' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      )
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([
@@ -148,15 +154,7 @@ describe('App', () => {
       .mockResolvedValueOnce(makeTeamsAccessResponse())
       .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
 
-    render(<App />)
-
-    fireEvent.change(screen.getByLabelText('个人访问令牌'), {
-      target: { value: 'token-value' },
-    })
-    fireEvent.change(screen.getByLabelText('组织名称'), {
-      target: { value: 'acme' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
+    renderConnectedApp()
 
     await waitFor(() => {
       expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
@@ -168,12 +166,6 @@ describe('App', () => {
 
   it('filters repositories with preset buttons', async () => {
     fetchMock
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ role: 'admin' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      )
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([
@@ -246,15 +238,7 @@ describe('App', () => {
       .mockResolvedValueOnce(makeTeamsAccessResponse())
       .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
 
-    render(<App />)
-
-    fireEvent.change(screen.getByLabelText('个人访问令牌'), {
-      target: { value: 'token-value' },
-    })
-    fireEvent.change(screen.getByLabelText('组织名称'), {
-      target: { value: 'acme' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
+    renderConnectedApp()
 
     // Default filter is "仅 Private", only repo-b (private) shows initially
     await waitFor(() => {
@@ -286,15 +270,6 @@ describe('App', () => {
     fetchMock.mockImplementation((input, init) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
-
-      if (url.includes('/user/memberships/orgs/acme')) {
-        return Promise.resolve(
-          new Response(JSON.stringify({ role: 'admin' }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }),
-        )
-      }
 
       if (url.includes('/orgs/acme/repos')) {
         return Promise.resolve(
@@ -373,15 +348,7 @@ describe('App', () => {
       return Promise.resolve(new Response(null, { status: 204 }))
     })
 
-    render(<App />)
-
-    fireEvent.change(screen.getByLabelText('个人访问令牌'), {
-      target: { value: 'token-value' },
-    })
-    fireEvent.change(screen.getByLabelText('组织名称'), {
-      target: { value: 'acme' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
+    renderConnectedApp()
 
     await waitFor(() => {
       expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
@@ -390,18 +357,18 @@ describe('App', () => {
     dragRepoToColumn('repo-a', 'admin')
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(12)
+      expect(fetchMock).toHaveBeenCalledTimes(11)
     })
 
     dragRepoToColumn('repo-b', 'maintain')
 
     expect(confirmSpy).not.toHaveBeenCalled()
-    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(12)
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(11)
 
     firstWrite.resolve(new Response(null, { status: 204 }))
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(13)
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(12)
     })
 
     secondWrite.resolve(new Response(null, { status: 204 }))
@@ -418,12 +385,6 @@ describe('App', () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     fetchMock
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ role: 'admin' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      )
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([
@@ -485,15 +446,7 @@ describe('App', () => {
       .mockResolvedValueOnce(makeTeamsAccessResponse())
       .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
 
-    render(<App />)
-
-    fireEvent.change(screen.getByLabelText('个人访问令牌'), {
-      target: { value: 'token-value' },
-    })
-    fireEvent.change(screen.getByLabelText('组织名称'), {
-      target: { value: 'acme' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
+    renderConnectedApp()
 
     await waitFor(() => {
       expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
@@ -509,19 +462,12 @@ describe('App', () => {
     dragRepoToColumn('repo-a', 'admin')
 
     expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(11)
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(10)
 
     confirmSpy.mockRestore()
   })
 
   it('loads user permissions on-demand when switching to user mode', async () => {
-    function makeAdminResponse() {
-      return new Response(JSON.stringify({ role: 'admin' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    }
-
     function makeReposResponse() {
       return new Response(
         JSON.stringify([
@@ -559,9 +505,8 @@ describe('App', () => {
       )
     }
 
-    // Initial connect: admin check, repos, teams, members, team repos
+    // Initial load: repos, teams, members, team repos
     fetchMock
-      .mockResolvedValueOnce(makeAdminResponse())
       .mockResolvedValueOnce(makeReposResponse())
       .mockResolvedValueOnce(makeTeamsResponse())
       .mockResolvedValueOnce(makeMembersResponse())
@@ -570,11 +515,7 @@ describe('App', () => {
       .mockResolvedValueOnce(makeTeamsAccessResponse())
       .mockResolvedValueOnce(makeCollaboratorsAccessResponse())
 
-    render(<App />)
-
-    fireEvent.change(screen.getByLabelText('个人访问令牌'), { target: { value: 'token-value' } })
-    fireEvent.change(screen.getByLabelText('组织名称'), { target: { value: 'acme' } })
-    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
+    renderConnectedApp()
 
     await waitFor(() => {
       expect(screen.getByTestId('column-push')).toHaveTextContent('repo-a')
@@ -603,30 +544,5 @@ describe('App', () => {
 
     // And the subject kind selector should still be on user mode
     expect(screen.getByLabelText('主体类型')).toHaveValue('user')
-  })
-
-  it('blocks non-admin token and shows warning', async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ role: 'member' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    )
-
-    render(<App />)
-
-    fireEvent.change(screen.getByLabelText('个人访问令牌'), {
-      target: { value: 'token-value' },
-    })
-    fireEvent.change(screen.getByLabelText('组织名称'), {
-      target: { value: 'acme' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
-
-    await waitFor(() => {
-      expect(screen.getByText('当前令牌不是该组织管理员，无法执行权限修改。')).toBeInTheDocument()
-    })
-
-    expect(screen.queryByLabelText('仓库权限看板')).not.toBeInTheDocument()
   })
 })

@@ -4,6 +4,8 @@ import type {
   GithubRepo,
   GithubTeam,
   OrgMember,
+  OrgRunner,
+  QueuedWorkflowRun,
   RepoAccessEntry,
   RepoCollaboratorAccess,
   RepoTeamAccess,
@@ -15,6 +17,27 @@ export interface HttpError extends Error {
   status: number
   message: string
   requestUrl: string
+  /** 响应头 x-ratelimit-remaining 的值，用于区分限流与权限拒绝 */
+  rateLimitRemaining?: string | null
+  /** 响应头 retry-after 的秒数，存在即代表次级限流 */
+  retryAfterSeconds?: number | null
+}
+
+/** 判断错误是否由 GitHub 主/次级限流引起（403/429 且带限流特征） */
+export function isRateLimitedError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const httpError = error as HttpError
+    if (httpError.status === 429) {
+      return true
+    }
+    if (httpError.status === 403) {
+      return (
+        httpError.rateLimitRemaining === '0' ||
+        (typeof httpError.retryAfterSeconds === 'number' && httpError.retryAfterSeconds >= 0)
+      )
+    }
+  }
+  return false
 }
 
 interface OrgMembershipResponse {
@@ -36,6 +59,19 @@ interface TeamRepoResponse {
 interface UserRepoPermissionResponse {
   permission?: string
   role_name?: string
+}
+
+interface WorkflowRunResponse {
+  id: number
+  name: string
+  display_title?: string
+  run_number: number
+  event: string
+  head_branch: string
+  head_sha: string
+  html_url: string
+  created_at: string
+  actor?: { login?: string } | null
 }
 
 export interface TeamRepoPermission {
@@ -221,6 +257,71 @@ export class GithubClient {
     )
   }
 
+  // ── Actions runners & workflow runs ───────────────────────────────────
+
+  async listOrgRunners(): Promise<OrgRunner[]> {
+    const allRunners: OrgRunner[] = []
+    let next: string | null =
+      `/orgs/${encodeURIComponent(this.org)}/actions/runners?per_page=100`
+
+    while (next) {
+      const response = await this.rawRequest(next)
+      const payload = (await this.parseJson(response)) as { runners?: OrgRunner[] } | null
+      allRunners.push(...(payload?.runners ?? []))
+
+      next = this.extractNextUrl(response.headers.get('link'))
+    }
+
+    return allRunners
+  }
+
+  /** 仓库不可读取（未启用 Actions / 无权限 / 不存在）时返回 null，与「无排队」区分 */
+  async listQueuedWorkflowRuns(repoName: string): Promise<QueuedWorkflowRun[] | null> {
+    try {
+      const allRuns: QueuedWorkflowRun[] = []
+      let next: string | null =
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/runs?status=queued&per_page=100`
+
+      while (next) {
+        const response = await this.rawRequest(next)
+        const payload = (await this.parseJson(response)) as {
+          workflow_runs?: WorkflowRunResponse[]
+        } | null
+
+        for (const run of payload?.workflow_runs ?? []) {
+          allRuns.push({
+            id: run.id,
+            repoName,
+            name: run.name,
+            displayTitle: run.display_title ?? run.name,
+            runNumber: run.run_number,
+            event: run.event,
+            headBranch: run.head_branch,
+            headSha: run.head_sha,
+            htmlUrl: run.html_url,
+            createdAt: run.created_at,
+            actor: run.actor?.login ?? '',
+          })
+        }
+
+        next = this.extractNextUrl(response.headers.get('link'))
+      }
+
+      return allRuns
+    } catch (error) {
+      // 仓库未启用 Actions / 令牌无权限 / 仓库不存在 → null（UI 计入跳过）；
+      // 403 若带限流特征（x-ratelimit-remaining=0 / retry-after）则继续抛出，避免静默丢失数据
+      const status = (error as { status?: number }).status
+      const unavailable =
+        status === 404 || status === 409 || (status === 403 && !isRateLimitedError(error))
+      if (unavailable) {
+        return null
+      }
+
+      throw error
+    }
+  }
+
   // ── Actions secrets ────────────────────────────────────────────────────
 
   async listOrgSecrets(): Promise<OrgSecret[]> {
@@ -376,6 +477,9 @@ export class GithubClient {
     error.status = response.status
     error.message = message
     error.requestUrl = requestUrl
+    error.rateLimitRemaining = response.headers.get('x-ratelimit-remaining')
+    const retryAfter = response.headers.get('retry-after')
+    error.retryAfterSeconds = retryAfter === null ? null : Number(retryAfter)
     throw error
   }
 

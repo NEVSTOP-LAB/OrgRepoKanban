@@ -11,6 +11,7 @@ export interface GithubRepo {
   html_url: string
   private?: boolean
   fork?: boolean
+  pushed_at?: string | null
   topics?: string[]
   accessList?: RepoAccessEntry[]
 }
@@ -58,6 +59,35 @@ export interface GithubCollaborator {
 export interface OrgMember {
   login: string
   id: number
+}
+
+export interface RunnerLabel {
+  id: number
+  name: string
+  type?: string
+}
+
+export interface OrgRunner {
+  id: number
+  name: string
+  os: string
+  status: 'online' | 'offline'
+  busy: boolean
+  labels: RunnerLabel[]
+}
+
+export interface QueuedWorkflowRun {
+  id: number
+  repoName: string
+  name: string
+  displayTitle: string
+  runNumber: number
+  event: string
+  headBranch: string
+  headSha: string
+  htmlUrl: string
+  createdAt: string
+  actor: string
 }
 
 export interface RepoPermission {

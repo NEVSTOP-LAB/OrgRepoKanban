@@ -32,7 +32,7 @@ npm run build
 
 当前仓库包含以下验证方式：
 
-- `npm test`：运行 Vitest 测试（10 个测试文件，65 个测试用例）。
+- `npm test`：运行 Vitest 测试（13 个测试文件，99 个测试用例）。
 - `npm run build`：执行 TypeScript 构建与 Vite 生产打包。
 
 ## 项目结构
@@ -40,23 +40,28 @@ npm run build
 ```
 src/
 ├── main.tsx                  # 入口：渲染 Root 组件
-├── Root.tsx                  # 页面路由（home / permissions / secrets）
-├── App.tsx                   # 权限看板（已有功能，零改动）
+├── Root.tsx                  # 页面路由 + 共享认证状态（PAT/org/client）
+├── Root.test.tsx             # 首页认证与导航集成测试
+├── App.tsx                   # 权限看板（共享连接 props 驱动）
 ├── App.css                   # 全局样式（含新页面样式）
 ├── index.css                 # 设计令牌与基础样式
 ├── components/
-│   ├── HomePage.tsx          # 首页导航
+│   ├── HomePage.tsx          # 首页：统一认证表单 + 导航卡片
 │   ├── SecretManager.tsx     # Secret 管理页
+│   ├── RunnerBoard.tsx       # Runner 看板页（runner 状态 + 排队队列）
+│   ├── RunnerBoard.test.tsx   # Runner 看板组件测试
 │   └── PermissionBoard.tsx   # 权限看板展示组件
 ├── domain/
 │   ├── secret.ts             # Secret 操作领域逻辑
 │   ├── secret.test.ts        # Secret 领域逻辑测试（17 用例）
+│   ├── runners.ts            # Runner 分类/队列排序/等待时长领域逻辑
+│   ├── runners.test.ts       # Runner 领域逻辑测试
 │   ├── board.ts              # 看板列构建逻辑
 │   ├── batch.ts              # 批量操作乐观更新与对账
 │   ├── permissions.ts        # 权限等级定义与比较
 │   └── selection.ts          # 多选逻辑
 └── github/
-    ├── client.ts             # GitHub API 客户端（含 Secret API 方法）
+    ├── client.ts             # GitHub API 客户端（含 Secret / Runner API 方法）
     ├── client.test.ts        # 客户端测试
     ├── data.ts               # 数据结构与转换
     ├── data.test.ts          # 数据转换测试
