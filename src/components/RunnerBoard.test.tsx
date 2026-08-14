@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { GithubClient } from '../github/client'
 import { RunnerBoard } from './RunnerBoard'
 
 const fetchMock = vi.fn<typeof fetch>()
@@ -72,9 +73,6 @@ function queuedRunResponse(repoName: string, runs: Array<Record<string, unknown>
 function stubConnectedApi(queuedByRepo: Record<string, Array<Record<string, unknown>>> = {}) {
   fetchMock.mockImplementation(async (input) => {
     const url = String(input)
-    if (url.includes('/user/memberships/orgs/')) {
-      return jsonResponse({ role: 'admin' })
-    }
     if (url.includes('/actions/runners')) {
       return jsonResponse(RUNNERS)
     }
@@ -89,16 +87,8 @@ function stubConnectedApi(queuedByRepo: Record<string, Array<Record<string, unkn
   })
 }
 
-async function connect() {
-  render(<RunnerBoard onBack={() => {}} />)
-  fireEvent.change(screen.getByLabelText('个人访问令牌（PAT）'), {
-    target: { value: 'token-value' },
-  })
-  fireEvent.change(screen.getByLabelText('组织名称'), {
-    target: { value: 'acme' },
-  })
-  fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
-  await waitFor(() => expect(screen.queryByRole('button', { name: '连接组织' })).not.toBeInTheDocument())
+function renderBoard() {
+  return render(<RunnerBoard client={new GithubClient('token-value', 'acme')} org="acme" onBack={() => {}} />)
 }
 
 describe('RunnerBoard', () => {
@@ -108,37 +98,12 @@ describe('RunnerBoard', () => {
     vi.stubGlobal('fetch', fetchMock)
   })
 
-  it('shows connection form and back button before connecting', () => {
-    render(<RunnerBoard onBack={() => {}} />)
-    expect(screen.getByRole('button', { name: '← 返回首页' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '连接组织' })).toBeInTheDocument()
-    expect(screen.getByLabelText('个人访问令牌（PAT）')).toBeInTheDocument()
-    expect(screen.getByLabelText('组织名称')).toBeInTheDocument()
-  })
-
-  it('warns when the token is not an org admin', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ role: 'member' }))
-
-    render(<RunnerBoard onBack={() => {}} />)
-    fireEvent.change(screen.getByLabelText('个人访问令牌（PAT）'), {
-      target: { value: 'token-value' },
-    })
-    fireEvent.change(screen.getByLabelText('组织名称'), {
-      target: { value: 'acme' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
-
-    await waitFor(() =>
-      expect(screen.getByText('当前令牌不是该组织管理员，无法查看 Runner 与队列。')).toBeInTheDocument(),
-    )
-  })
-
   it('loads runners into three columns and lists queued runs', async () => {
     stubConnectedApi({
       'repo-a': [{ id: 9001, name: 'CI', display_title: 'CI / test' }],
     })
 
-    await connect()
+    renderBoard()
 
     await waitFor(() => expect(screen.getByText('linux-1')).toBeInTheDocument())
     expect(screen.getByText('win-1')).toBeInTheDocument()
@@ -146,6 +111,7 @@ describe('RunnerBoard', () => {
     expect(screen.getByText('🔵 忙碌')).toBeInTheDocument()
     expect(screen.getByText('⚫ 离线')).toBeInTheDocument()
     expect(screen.getByText('RUN')).toBeInTheDocument()
+    expect(screen.getByText('acme')).toBeInTheDocument()
 
     await waitFor(() => expect(screen.getByText('repo-a')).toBeInTheDocument())
     expect(screen.getByText('CI / test')).toBeInTheDocument()
@@ -155,7 +121,7 @@ describe('RunnerBoard', () => {
   it('shows empty queue state when nothing is queued', async () => {
     stubConnectedApi({})
 
-    await connect()
+    renderBoard()
 
     await waitFor(() =>
       expect(screen.getByText('当前没有排队等待的 workflow。')).toBeInTheDocument(),
@@ -168,7 +134,7 @@ describe('RunnerBoard', () => {
       'repo-b': [{ id: 9002, name: 'Deploy', display_title: 'Deploy / prod' }],
     })
 
-    await connect()
+    renderBoard()
     await waitFor(() => expect(screen.getByText('CI / test')).toBeInTheDocument())
     expect(screen.getByText('Deploy / prod')).toBeInTheDocument()
 
