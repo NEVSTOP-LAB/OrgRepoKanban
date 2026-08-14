@@ -363,9 +363,8 @@ function App({ client, org }: AppProps) {
     setFilterQuery('')
     setFilterPreset('private')
     setInheritedFilter('all')
-    if (isRefresh) {
-      setRefreshing(true)
-    }
+    // 首次加载与刷新都进入 busy 状态，避免权限数据就绪前误操作
+    setRefreshing(true)
 
     try {
       const [repoList, teams, members] = await Promise.all([

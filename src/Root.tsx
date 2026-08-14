@@ -48,6 +48,9 @@ export function Root() {
       }
 
       setClient(nextClient)
+      // 写回规范化后的值，保证展示与 client 实际连接的组织一致
+      setOrg(trimmedOrg)
+      setToken(trimmedToken)
       setNotice({
         tone: 'success',
         title: `已连接组织 ${trimmedOrg}`,

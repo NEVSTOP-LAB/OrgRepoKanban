@@ -315,4 +315,25 @@ describe('GithubClient', () => {
       status: 429,
     })
   })
+
+  it('rethrows 403 responses that carry rate-limit headers', async () => {
+    const cases: Array<Record<string, string>> = [
+      { 'x-ratelimit-remaining': '0' },
+      { 'retry-after': '30' },
+    ]
+
+    for (const extraHeaders of cases) {
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'rate limited' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json', ...extraHeaders },
+        }),
+      )
+
+      const client = new GithubClient('token-value', 'acme')
+      await expect(client.listQueuedWorkflowRuns('repo-a')).rejects.toMatchObject({
+        status: 403,
+      })
+    }
+  })
 })

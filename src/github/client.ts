@@ -17,6 +17,27 @@ export interface HttpError extends Error {
   status: number
   message: string
   requestUrl: string
+  /** 响应头 x-ratelimit-remaining 的值，用于区分限流与权限拒绝 */
+  rateLimitRemaining?: string | null
+  /** 响应头 retry-after 的秒数，存在即代表次级限流 */
+  retryAfterSeconds?: number | null
+}
+
+/** 判断错误是否由 GitHub 主/次级限流引起（403/429 且带限流特征） */
+export function isRateLimitedError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const httpError = error as HttpError
+    if (httpError.status === 429) {
+      return true
+    }
+    if (httpError.status === 403) {
+      return (
+        httpError.rateLimitRemaining === '0' ||
+        (typeof httpError.retryAfterSeconds === 'number' && httpError.retryAfterSeconds >= 0)
+      )
+    }
+  }
+  return false
 }
 
 interface OrgMembershipResponse {
@@ -288,9 +309,12 @@ export class GithubClient {
 
       return allRuns
     } catch (error) {
-      // 仓库未启用 Actions / 令牌无权限 / 仓库不存在 → null（UI 计入跳过）
+      // 仓库未启用 Actions / 令牌无权限 / 仓库不存在 → null（UI 计入跳过）；
+      // 403 若带限流特征（x-ratelimit-remaining=0 / retry-after）则继续抛出，避免静默丢失数据
       const status = (error as { status?: number }).status
-      if (status === 403 || status === 404 || status === 409) {
+      const unavailable =
+        status === 404 || status === 409 || (status === 403 && !isRateLimitedError(error))
+      if (unavailable) {
         return null
       }
 
@@ -453,6 +477,9 @@ export class GithubClient {
     error.status = response.status
     error.message = message
     error.requestUrl = requestUrl
+    error.rateLimitRemaining = response.headers.get('x-ratelimit-remaining')
+    const retryAfter = response.headers.get('retry-after')
+    error.retryAfterSeconds = retryAfter === null ? null : Number(retryAfter)
     throw error
   }
 

@@ -145,4 +145,31 @@ describe('RunnerBoard', () => {
     await waitFor(() => expect(screen.queryByText('CI / test')).not.toBeInTheDocument())
     expect(screen.getByText('Deploy / prod')).toBeInTheDocument()
   })
+  it('reports scan failures separately from unreadable repos', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/actions/runners')) {
+        return jsonResponse(RUNNERS)
+      }
+      if (url.includes('/orgs/acme/repos')) {
+        return jsonResponse(REPOS)
+      }
+      if (url.includes('/repos/acme/repo-a/actions/runs')) {
+        return new Response(JSON.stringify({ message: 'boom' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.includes('/repos/acme/repo-b/actions/runs')) {
+        return jsonResponse(queuedRunResponse('repo-b', []))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+
+    renderBoard()
+
+    await waitFor(() =>
+      expect(screen.getByText(/1 个仓库扫描失败（限流或网络问题）/)).toBeInTheDocument(),
+    )
+  })
 })

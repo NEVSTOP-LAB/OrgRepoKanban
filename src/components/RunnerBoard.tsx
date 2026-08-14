@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { GithubClient } from '../github/client'
+import { GithubClient, isRateLimitedError } from '../github/client'
 import type { GithubRepo, OrgRunner, QueuedWorkflowRun } from '../github/data'
 import {
   classifyRunners,
@@ -67,6 +67,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const [queuedRuns, setQueuedRuns] = useState<QueuedWorkflowRun[]>([])
   const [scanProgress, setScanProgress] = useState<{ completed: number; total: number } | null>(null)
   const [skippedRepos, setSkippedRepos] = useState(0)
+  const [scanFailures, setScanFailures] = useState(0)
 
   // 视图选项
   const [recentOnly, setRecentOnly] = useState(true)
@@ -84,12 +85,16 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     const targets = selectReposForScan(repoList, Date.now(), recentOnlyRef.current)
     const collected: QueuedWorkflowRun[] = []
     let skipped = 0
+    let failed = 0
     let completed = 0
     const queue = [...targets]
     const CONCURRENCY = 8
 
     setScanProgress({ completed: 0, total: targets.length })
     setSkippedRepos(0)
+    setScanFailures(0)
+    // 开始新一轮扫描前先清空旧队列：targets 为空时也不残留上一轮结果
+    setQueuedRuns([])
 
     const worker = async () => {
       while (queue.length > 0) {
@@ -97,19 +102,21 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
         try {
           const runs = await activeClient.listQueuedWorkflowRuns(repo.name)
           if (runs === null) {
+            // 仓库不可读（未启用 Actions / 无权限 / 不存在）
             skipped += 1
           } else {
             collected.push(...runs)
           }
         } catch {
-          // 意外错误也计入跳过，避免单个仓库拖垮整轮扫描
-          skipped += 1
+          // 限流 / 5xx / 网络错误：计入扫描失败，与「仓库不可读」区分展示
+          failed += 1
         }
 
         completed += 1
         if (epoch === scanEpochRef.current) {
           setQueuedRuns(sortQueuedRuns([...collected]))
           setSkippedRepos(skipped)
+          setScanFailures(failed)
           setScanProgress({ completed, total: targets.length })
         }
       }
@@ -133,7 +140,16 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     try {
       const [repoList, runnerList] = await Promise.all([
         activeClient.listOrgRepos(),
-        activeClient.listOrgRunners().catch(() => null),
+        // 仅把「确认的权限拒绝」当作不可读；限流/网络/5xx 继续抛出交给外层错误处理
+        activeClient.listOrgRunners().catch((error: unknown) => {
+          if (isRateLimitedError(error)) {
+            throw error
+          }
+          if ((error as { status?: number }).status === 403) {
+            return null
+          }
+          throw error
+        }),
       ])
 
       if (epoch !== scanEpochRef.current) {
@@ -267,6 +283,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
             <input
               type="checkbox"
               checked={recentOnly}
+              disabled={refreshing}
               onChange={(event) => {
                 const checked = event.target.checked
                 recentOnlyRef.current = checked
@@ -278,6 +295,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
           </label>
           <select
             className="auto-refresh-select"
+            aria-label="自动刷新周期"
             value={autoRefreshSeconds}
             onChange={(event) => setAutoRefreshSeconds(Number(event.target.value))}
           >
@@ -300,7 +318,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
         </div>
 
         {notice && (
-          <div className={`status-banner ${notice.tone}`}>
+          <div className={`status-banner ${notice.tone}`} role="status">
             <strong>{notice.title}</strong>
             {notice.description && <span>{notice.description}</span>}
           </div>
@@ -463,6 +481,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                   <input
                     type="text"
                     className="queue-filter-input"
+                    aria-label="过滤排队 workflow"
                     placeholder="过滤仓库 / workflow / 分支…"
                     value={filterQuery}
                     onChange={(event) => setFilterQuery(event.target.value)}
@@ -487,12 +506,22 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
               </div>
             )}
 
+            {scanFailures > 0 && (
+              <div className="queue-skip-hint">
+                ⚠️ {scanFailures} 个仓库扫描失败（限流或网络问题），当前结果可能不完整。
+              </div>
+            )}
+
             {filteredRuns.length === 0 ? (
               <div className="empty-state queue-empty">
                 <span className="queue-empty-icon">🎉</span>
                 <p>当前没有排队等待的 workflow。</p>
                 <p className="queue-empty-sub">
-                  {filterQuery.trim() ? '换个过滤词试试，或清空过滤。' : '所有已触发的工作流要么已完成，要么正在执行。'}
+                  {filterQuery.trim()
+                    ? '换个过滤词试试，或清空过滤。'
+                    : recentOnly
+                      ? '所有已触发的工作流要么已完成，要么正在执行。仅扫描了 24 小时内有推送的仓库，定时/手动触发且仓库久未推送的任务不在扫描范围内。'
+                      : '所有已触发的工作流要么已完成，要么正在执行。'}
                 </p>
               </div>
             ) : (

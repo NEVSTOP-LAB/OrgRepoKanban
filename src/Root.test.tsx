@@ -70,6 +70,25 @@ describe('Root', () => {
     expect(screen.getByText('已连接组织 acme')).toBeInTheDocument()
   })
 
+  it('normalizes org name and token back into state after connecting', async () => {
+    stubAdminVerify()
+    render(<Root />)
+    fireEvent.change(screen.getByLabelText('个人访问令牌（PAT）'), {
+      target: { value: ' token-value ' },
+    })
+    fireEvent.change(screen.getByLabelText('组织名称'), {
+      target: { value: ' acme ' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '连接组织' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('已通过组织管理员校验')).toBeInTheDocument(),
+    )
+    // 连接成功后写回规范化值：横幅与组织标签均不含首尾空格
+    expect(screen.getByText('已连接组织 acme')).toBeInTheDocument()
+    expect(screen.getByText('acme', { selector: '.org-label' })).toBeInTheDocument()
+  })
+
   it('warns when the token is not an org admin', async () => {
     fetchMock.mockImplementation((input) => {
       const url = String(input)
