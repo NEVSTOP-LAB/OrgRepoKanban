@@ -204,4 +204,114 @@ describe('GithubClient', () => {
       message: 'Forbidden',
     })
   })
+
+  it('lists org self-hosted runners with pagination', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            total_count: 3,
+            runners: [
+              { id: 11, name: 'linux-1', os: 'linux', status: 'online', busy: false, labels: [] },
+            ],
+          }),
+          {
+            status: 200,
+            headers: {
+              link: '<https://api.github.com/orgs/acme/actions/runners?page=2>; rel="next"',
+              'content-type': 'application/json',
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            total_count: 3,
+            runners: [
+              { id: 12, name: 'mac-1', os: 'macos', status: 'online', busy: true, labels: [] },
+              { id: 13, name: 'win-1', os: 'windows', status: 'offline', busy: false, labels: [] },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+
+    const client = new GithubClient('token-value', 'acme')
+    const runners = await client.listOrgRunners()
+    expect(runners.map((runner) => runner.id)).toEqual([11, 12, 13])
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/orgs/acme/actions/runners?per_page=100')
+    expect(fetchMock.mock.calls[1]?.[0]).toContain('page=2')
+  })
+
+  it('maps queued workflow runs into flat records', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          total_count: 1,
+          workflow_runs: [
+            {
+              id: 9001,
+              name: 'CI',
+              display_title: 'CI / test',
+              run_number: 12,
+              event: 'push',
+              head_branch: 'main',
+              head_sha: 'deadbeef',
+              html_url: 'https://github.com/acme/repo-a/actions/runs/9001',
+              created_at: '2025-01-01T10:00:00Z',
+              actor: { login: 'alice' },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    )
+
+    const client = new GithubClient('token-value', 'acme')
+    const runs = await client.listQueuedWorkflowRuns('repo-a')
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({
+      id: 9001,
+      repoName: 'repo-a',
+      displayTitle: 'CI / test',
+      headBranch: 'main',
+      actor: 'alice',
+    })
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/repos/acme/repo-a/actions/runs?status=queued')
+  })
+
+  it('skips repos where queued runs listing is unavailable', async () => {
+    for (const status of [403, 404, 409]) {
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'unavailable' }), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+
+      const client = new GithubClient('token-value', 'acme')
+      await expect(client.listQueuedWorkflowRuns('repo-a')).resolves.toEqual([])
+    }
+  })
+
+  it('rethrows unexpected errors from queued runs listing', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ message: 'rate limited' }), {
+        status: 429,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const client = new GithubClient('token-value', 'acme')
+    await expect(client.listQueuedWorkflowRuns('repo-a')).rejects.toMatchObject({
+      status: 429,
+    })
+  })
 })

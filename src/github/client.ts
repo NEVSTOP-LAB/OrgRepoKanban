@@ -4,6 +4,8 @@ import type {
   GithubRepo,
   GithubTeam,
   OrgMember,
+  OrgRunner,
+  QueuedWorkflowRun,
   RepoAccessEntry,
   RepoCollaboratorAccess,
   RepoTeamAccess,
@@ -36,6 +38,19 @@ interface TeamRepoResponse {
 interface UserRepoPermissionResponse {
   permission?: string
   role_name?: string
+}
+
+interface WorkflowRunResponse {
+  id: number
+  name: string
+  display_title?: string
+  run_number: number
+  event: string
+  head_branch: string
+  head_sha: string
+  html_url: string
+  created_at: string
+  actor?: { login?: string } | null
 }
 
 export interface TeamRepoPermission {
@@ -219,6 +234,67 @@ export class GithubClient {
         method: 'DELETE',
       },
     )
+  }
+
+  // ── Actions runners & workflow runs ───────────────────────────────────
+
+  async listOrgRunners(): Promise<OrgRunner[]> {
+    const allRunners: OrgRunner[] = []
+    let next: string | null =
+      `/orgs/${encodeURIComponent(this.org)}/actions/runners?per_page=100`
+
+    while (next) {
+      const response = await this.rawRequest(next)
+      const payload = (await this.parseJson(response)) as { runners?: OrgRunner[] } | null
+      allRunners.push(...(payload?.runners ?? []))
+
+      next = this.extractNextUrl(response.headers.get('link'))
+    }
+
+    return allRunners
+  }
+
+  async listQueuedWorkflowRuns(repoName: string): Promise<QueuedWorkflowRun[]> {
+    try {
+      const allRuns: QueuedWorkflowRun[] = []
+      let next: string | null =
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/runs?status=queued&per_page=100`
+
+      while (next) {
+        const response = await this.rawRequest(next)
+        const payload = (await this.parseJson(response)) as {
+          workflow_runs?: WorkflowRunResponse[]
+        } | null
+
+        for (const run of payload?.workflow_runs ?? []) {
+          allRuns.push({
+            id: run.id,
+            repoName,
+            name: run.name,
+            displayTitle: run.display_title ?? run.name,
+            runNumber: run.run_number,
+            event: run.event,
+            headBranch: run.head_branch,
+            headSha: run.head_sha,
+            htmlUrl: run.html_url,
+            createdAt: run.created_at,
+            actor: run.actor?.login ?? '',
+          })
+        }
+
+        next = this.extractNextUrl(response.headers.get('link'))
+      }
+
+      return allRuns
+    } catch (error) {
+      // 仓库未启用 Actions / 令牌无权限 / 仓库不存在时静默跳过
+      const status = (error as { status?: number }).status
+      if (status === 403 || status === 404 || status === 409) {
+        return []
+      }
+
+      throw error
+    }
   }
 
   // ── Actions secrets ────────────────────────────────────────────────────
