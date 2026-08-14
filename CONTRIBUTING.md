@@ -32,7 +32,7 @@ npm run build
 
 当前仓库包含以下验证方式：
 
-- `npm test`：运行 Vitest 测试（10 个测试文件，65 个测试用例）。
+- `npm test`：运行 Vitest 测试（12 个测试文件，97 个测试用例）。
 - `npm run build`：执行 TypeScript 构建与 Vite 生产打包。
 
 ## 项目结构
@@ -47,16 +47,20 @@ src/
 ├── components/
 │   ├── HomePage.tsx          # 首页导航
 │   ├── SecretManager.tsx     # Secret 管理页
+│   ├── RunnerBoard.tsx       # Runner 看板页（runner 状态 + 排队队列）
+│   ├── RunnerBoard.test.tsx   # Runner 看板组件测试
 │   └── PermissionBoard.tsx   # 权限看板展示组件
 ├── domain/
 │   ├── secret.ts             # Secret 操作领域逻辑
 │   ├── secret.test.ts        # Secret 领域逻辑测试（17 用例）
+│   ├── runners.ts            # Runner 分类/队列排序/等待时长领域逻辑
+│   ├── runners.test.ts       # Runner 领域逻辑测试
 │   ├── board.ts              # 看板列构建逻辑
 │   ├── batch.ts              # 批量操作乐观更新与对账
 │   ├── permissions.ts        # 权限等级定义与比较
 │   └── selection.ts          # 多选逻辑
 └── github/
-    ├── client.ts             # GitHub API 客户端（含 Secret API 方法）
+    ├── client.ts             # GitHub API 客户端（含 Secret / Runner API 方法）
     ├── client.test.ts        # 客户端测试
     ├── data.ts               # 数据结构与转换
     ├── data.test.ts          # 数据转换测试
