@@ -1,0 +1,632 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import { GithubClient } from '../github/client'
+import type { GithubRepo, OrgRunner, QueuedWorkflowRun } from '../github/data'
+import {
+  classifyRunners,
+  eventLabel,
+  formatWaitDuration,
+  longestWaitMs,
+  matchesRunFilter,
+  osIcon,
+  runnerStats,
+  selectReposForScan,
+  sortQueuedRuns,
+  waitMsOf,
+  waitRatioOf,
+  waitTierOf,
+} from '../domain/runners'
+
+// ── 类型与常量 ───────────────────────────────────────────────────────────
+
+interface Notice {
+  tone: 'success' | 'warning' | 'error' | 'info'
+  title: string
+  description?: string
+}
+
+const RUNNER_COLUMNS = [
+  { key: 'idle', title: '空闲', icon: '🟢', hint: '在线待命，可立即接单' },
+  { key: 'busy', title: '忙碌', icon: '🔵', hint: '正在执行 job' },
+  { key: 'offline', title: '离线', icon: '⚫', hint: '未连接到 GitHub' },
+] as const
+
+const AUTO_REFRESH_OPTIONS = [
+  { seconds: 0, label: '关闭' },
+  { seconds: 15, label: '15 秒' },
+  { seconds: 30, label: '30 秒' },
+  { seconds: 60, label: '60 秒' },
+]
+
+const MAX_RUNNER_LABELS = 4
+
+function formatError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return fallback
+}
+
+// ── 组件 ─────────────────────────────────────────────────────────────────
+
+export interface RunnerBoardProps {
+  onBack: () => void
+}
+
+export function RunnerBoard({ onBack }: RunnerBoardProps) {
+  // 连接状态
+  const [token, setToken] = useState('')
+  const [org, setOrg] = useState('')
+  const [client, setClient] = useState<GithubClient | null>(null)
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [notice, setNotice] = useState<Notice | null>(null)
+
+  // 数据状态
+  const [repos, setRepos] = useState<GithubRepo[]>([])
+  const [runners, setRunners] = useState<OrgRunner[]>([])
+  const [runnersUnavailable, setRunnersUnavailable] = useState(false)
+  const [queuedRuns, setQueuedRuns] = useState<QueuedWorkflowRun[]>([])
+  const [scanProgress, setScanProgress] = useState<{ completed: number; total: number } | null>(null)
+  const [skippedRepos, setSkippedRepos] = useState(0)
+
+  // 视图选项
+  const [recentOnly, setRecentOnly] = useState(true)
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(30)
+  const [filterQuery, setFilterQuery] = useState('')
+  const [now, setNow] = useState(() => Date.now())
+
+  const scanEpochRef = useRef(0)
+  const refreshingRef = useRef(false)
+  const recentOnlyRef = useRef(true)
+
+  // ── 数据加载 ─────────────────────────────────────────────────────────
+
+  const scanQueued = useCallback(async (activeClient: GithubClient, repoList: GithubRepo[], epoch: number) => {
+    const targets = selectReposForScan(repoList, Date.now(), recentOnlyRef.current)
+    const collected: QueuedWorkflowRun[] = []
+    let skipped = 0
+    let completed = 0
+    const queue = [...targets]
+    const CONCURRENCY = 8
+
+    setScanProgress({ completed: 0, total: targets.length })
+    setSkippedRepos(0)
+
+    const worker = async () => {
+      while (queue.length > 0) {
+        const repo = queue.shift()!
+        try {
+          const runs = await activeClient.listQueuedWorkflowRuns(repo.name)
+          if (runs === null) {
+            skipped += 1
+          } else {
+            collected.push(...runs)
+          }
+        } catch {
+          // 意外错误也计入跳过，避免单个仓库拖垮整轮扫描
+          skipped += 1
+        }
+
+        completed += 1
+        if (epoch === scanEpochRef.current) {
+          setQueuedRuns(sortQueuedRuns([...collected]))
+          setSkippedRepos(skipped)
+          setScanProgress({ completed, total: targets.length })
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, () => worker()))
+    if (epoch === scanEpochRef.current) {
+      setScanProgress(null)
+    }
+  }, [])
+
+  const loadAll = useCallback(async (activeClient: GithubClient, announce: boolean) => {
+    if (refreshingRef.current) {
+      return
+    }
+
+    refreshingRef.current = true
+    setRefreshing(true)
+    const epoch = ++scanEpochRef.current
+
+    try {
+      const [repoList, runnerList] = await Promise.all([
+        activeClient.listOrgRepos(),
+        activeClient.listOrgRunners().catch(() => null),
+      ])
+
+      if (epoch !== scanEpochRef.current) {
+        return
+      }
+
+      setRepos(repoList)
+      if (runnerList === null) {
+        setRunners([])
+        setRunnersUnavailable(true)
+      } else {
+        setRunners(runnerList)
+        setRunnersUnavailable(false)
+      }
+
+      await scanQueued(activeClient, repoList, epoch)
+
+      if (announce && epoch === scanEpochRef.current) {
+        setNotice({
+          tone: 'success',
+          title: '已连接并完成首次扫描。',
+          description: '页面仅在内存中持有令牌与组织名称，刷新页面后即失效。',
+        })
+      }
+    } catch (error) {
+      if (epoch === scanEpochRef.current) {
+        setNotice({
+          tone: 'error',
+          title: '加载 Runner 与队列数据失败。',
+          description: formatError(error, '请检查令牌权限、组织名称或网络连接。'),
+        })
+      }
+    } finally {
+      refreshingRef.current = false
+      setRefreshing(false)
+    }
+  }, [scanQueued])
+
+  // ── 连接 ─────────────────────────────────────────────────────────────
+
+  const connectOrg = async () => {
+    const trimmedToken = token.trim()
+    const trimmedOrg = org.trim()
+
+    if (!trimmedToken || !trimmedOrg) {
+      setNotice({ tone: 'warning', title: '请先填写个人访问令牌和组织名称。' })
+      return
+    }
+
+    setNotice(null)
+    setConnecting(true)
+    const nextClient = new GithubClient(trimmedToken, trimmedOrg)
+
+    try {
+      const admin = await nextClient.verifyOrgAdmin()
+      setIsAdmin(admin)
+
+      if (!admin) {
+        setClient(null)
+        setNotice({
+          tone: 'warning',
+          title: '当前令牌不是该组织管理员，无法查看 Runner 与队列。',
+          description: '请使用具备 admin:org 与 repo 权限的组织管理员令牌重新连接。',
+        })
+        return
+      }
+
+      setClient(nextClient)
+      void loadAll(nextClient, true)
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        title: '连接组织失败。',
+        description: formatError(error, '请检查令牌权限、组织名称或网络连接。'),
+      })
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  // ── 自动刷新 ─────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!client || autoRefreshSeconds <= 0) {
+      return
+    }
+
+    const timer = setInterval(() => {
+      void loadAll(client, false)
+    }, autoRefreshSeconds * 1000)
+
+    return () => clearInterval(timer)
+  }, [client, autoRefreshSeconds, loadAll])
+
+  // 本地时钟：每 5 秒更新等待时长显示
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 5000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // 卸载时作废进行中的扫描
+  useEffect(() => {
+    return () => {
+      scanEpochRef.current += 1
+    }
+  }, [])
+
+  // ── 派生视图数据 ─────────────────────────────────────────────────────
+
+  const columns = classifyRunners(runners)
+  const stats = runnerStats(runners)
+  const loadPercent = Math.round(stats.loadRatio * 100)
+  const loadTier = stats.loadRatio < 0.5 ? 'low' : stats.loadRatio < 0.8 ? 'mid' : 'high'
+
+  const filteredRuns = filterQuery.trim()
+    ? queuedRuns.filter((run) => matchesRunFilter(run, filterQuery))
+    : queuedRuns
+  const longestWait = longestWaitMs(filteredRuns, now)
+  const connected = client !== null
+
+  // ── 渲染 ─────────────────────────────────────────────────────────────
+
+  return (
+    <main className="app-shell">
+      <div className="back-nav">
+        <button type="button" className="back-nav-button" onClick={onBack}>
+          ← 返回首页
+        </button>
+      </div>
+
+      <section className="hero-panel">
+        <div className="hero-copy">
+          <span className="eyebrow">Actions Runner 运行看板</span>
+          <h1>谁在跑，谁在等，一眼看清。</h1>
+          <p>
+            监控组织自托管 Runner 的在线与忙碌状态，并汇总全部仓库中排队等待执行的 workflow。
+          </p>
+          <div className="badge-row">
+            <span className="badge">只读监控，无任何写操作</span>
+            <span className="badge">默认仅扫描 24 小时内有推送的仓库</span>
+            <span className="badge">支持自动刷新</span>
+          </div>
+        </div>
+
+        <div className="hero-meta">
+          <div className="meta-card">
+            <strong>凭据策略</strong>
+            <span>PAT 与组织名仅存内存，关闭页面即销毁。</span>
+          </div>
+          <div className="meta-card">
+            <strong>令牌权限</strong>
+            <span>需要 admin:org 与 repo；查看 Runner 还需 manage_runners:org。</span>
+          </div>
+          <div className="meta-card">
+            <strong>数据口径</strong>
+            <span>GitHub 托管 Runner 无 API，仅展示自托管 Runner。</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="control-panel">
+        {!connected ? (
+          <div className="connect-row">
+            <div className="connect-field field">
+              <label htmlFor="runner-pat">个人访问令牌（PAT）</label>
+              <input
+                id="runner-pat"
+                type="password"
+                value={token}
+                placeholder="ghp_..."
+                onChange={(event) => setToken(event.target.value)}
+              />
+            </div>
+            <div className="connect-field field">
+              <label htmlFor="runner-org">组织名称</label>
+              <input
+                id="runner-org"
+                type="text"
+                value={org}
+                placeholder="例如 nevstop-lab"
+                onChange={(event) => setOrg(event.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={connecting}
+              onClick={() => void connectOrg()}
+            >
+              {connecting ? '连接中…' : '连接组织'}
+            </button>
+          </div>
+        ) : (
+          <div className="connected-bar">
+            <span className="org-label">{org.trim()}</span>
+            <span className="stat-badge">{repos.length} 个仓库</span>
+            <label className="scan-toggle">
+              <input
+                type="checkbox"
+                checked={recentOnly}
+                onChange={(event) => {
+                  const checked = event.target.checked
+                  recentOnlyRef.current = checked
+                  setRecentOnly(checked)
+                  if (client) {
+                    void loadAll(client, false)
+                  }
+                }}
+              />
+              仅扫描 24 小时内有推送的仓库
+            </label>
+            <select
+              className="auto-refresh-select"
+              value={autoRefreshSeconds}
+              onChange={(event) => setAutoRefreshSeconds(Number(event.target.value))}
+            >
+              {AUTO_REFRESH_OPTIONS.map((option) => (
+                <option key={option.seconds} value={option.seconds}>
+                  自动刷新：{option.label}
+                </option>
+              ))}
+            </select>
+            <div className="connected-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={refreshing}
+                onClick={() => client && void loadAll(client, false)}
+              >
+                {refreshing ? '刷新中…' : '刷新'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {notice && (
+          <div className={`status-banner ${notice.tone}`}>
+            <strong>{notice.title}</strong>
+            {notice.description && <span>{notice.description}</span>}
+          </div>
+        )}
+
+        {isAdmin === false && client === null && (
+          <div className="status-banner warning">
+            <strong>无管理员权限</strong>
+            <span>请更换具备 admin:org 与 repo 权限的令牌后重新连接。</span>
+          </div>
+        )}
+      </section>
+
+      {connected && (
+        <>
+          {/* ── Runner 看板 ── */}
+          <section className="board-panel runner-board-panel">
+            <div className="section-title">
+              <h2>🏃 自托管 Runner 池</h2>
+              <p>空闲 / 忙碌 / 离线三列视图，负载条展示在线 Runner 的忙碌占比。</p>
+            </div>
+
+            {runnersUnavailable && (
+              <div className="status-banner warning">
+                <strong>Runner 列表不可读</strong>
+                <span>
+                  当前令牌缺少 manage_runners:org 权限，无法读取组织 Runner 状态；队列监控不受影响。
+                </span>
+              </div>
+            )}
+
+            <div className="runner-overview">
+              <div className="runner-stat">
+                <span className="runner-stat-icon">🖥️</span>
+                <div className="runner-stat-body">
+                  <strong>{stats.total}</strong>
+                  <span>Runner 总数</span>
+                </div>
+              </div>
+              <div className="runner-stat is-idle">
+                <span className="runner-stat-icon">🟢</span>
+                <div className="runner-stat-body">
+                  <strong>{stats.idle}</strong>
+                  <span>空闲</span>
+                </div>
+              </div>
+              <div className="runner-stat is-busy">
+                <span className="runner-stat-icon">🔵</span>
+                <div className="runner-stat-body">
+                  <strong>{stats.busy}</strong>
+                  <span>忙碌</span>
+                </div>
+              </div>
+              <div className="runner-stat is-offline">
+                <span className="runner-stat-icon">⚫</span>
+                <div className="runner-stat-body">
+                  <strong>{stats.offline}</strong>
+                  <span>离线</span>
+                </div>
+              </div>
+              <div className="load-meter">
+                <div className="load-meter-head">
+                  <span>在线负载</span>
+                  <strong>{loadPercent}%</strong>
+                </div>
+                <div className="load-bar">
+                  <div className={`load-bar-fill is-${loadTier}`} style={{ width: `${loadPercent}%` }} />
+                </div>
+                <span className="load-meter-caption">
+                  {stats.busy} 忙碌 / {stats.online} 在线
+                </span>
+              </div>
+            </div>
+
+            <div className="runner-board">
+              {RUNNER_COLUMNS.map((column) => {
+                const columnRunners = columns[column.key]
+                return (
+                  <div key={column.key} className={`runner-column is-${column.key}`}>
+                    <div className="runner-column-header">
+                      <h3>
+                        {column.icon} {column.title}
+                      </h3>
+                      <span className="runner-column-count">{columnRunners.length}</span>
+                    </div>
+                    <p className="runner-column-hint">{column.hint}</p>
+                    <div className="runner-column-cards">
+                      {columnRunners.length === 0 ? (
+                        <div className="runner-column-empty">暂无</div>
+                      ) : (
+                        columnRunners.map((runner) => (
+                          <div key={runner.id} className={`runner-card is-${column.key}`}>
+                            <span className="runner-status-dot" aria-hidden="true" />
+                            <div className="runner-card-info">
+                              <span className="runner-card-name">{runner.name}</span>
+                              <span className="runner-card-meta">
+                                <span className="runner-os">{osIcon(runner.os)}</span>
+                                {runner.os}
+                              </span>
+                              {runner.labels.length > 0 && (
+                                <span className="runner-card-labels">
+                                  {runner.labels.slice(0, MAX_RUNNER_LABELS).map((label) => (
+                                    <span key={label.id} className="runner-label-chip">
+                                      {label.name}
+                                    </span>
+                                  ))}
+                                  {runner.labels.length > MAX_RUNNER_LABELS && (
+                                    <span className="runner-label-chip is-more">
+                                      +{runner.labels.length - MAX_RUNNER_LABELS}
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                            </div>
+                            {column.key === 'busy' && (
+                              <span className="runner-busy-badge">RUN</span>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+
+          {/* ── 排队队列看板 ── */}
+          <section className="board-panel queue-panel">
+            <div className="section-title">
+              <h2>⏳ 排队等待的 workflow</h2>
+              <p>按等待时长排序，等待条相对最长等待绘制；点击条目打开 GitHub 上的运行详情。</p>
+            </div>
+
+            <div className="toolbar">
+              <div className="toolbar-main">
+                <div className="queue-summary">
+                  <div className="queue-summary-stat is-total">
+                    <strong>{filteredRuns.length}</strong>
+                    <span>排队中</span>
+                  </div>
+                  <div className="queue-summary-stat is-longest">
+                    <strong>{filteredRuns.length > 0 ? formatWaitDuration(longestWait) : '—'}</strong>
+                    <span>最长等待</span>
+                  </div>
+                  <div className="queue-summary-stat is-cover">
+                    <strong>{scanProgress ? `${scanProgress.completed}/${scanProgress.total}` : '—'}</strong>
+                    <span>扫描覆盖</span>
+                  </div>
+                </div>
+                {scanProgress && (
+                  <div className="scan-progress">
+                    <div className="load-bar">
+                      <div
+                        className="load-bar-fill is-low"
+                        style={{
+                          width: `${scanProgress.total === 0 ? 100 : (scanProgress.completed / scanProgress.total) * 100}%`,
+                        }}
+                      />
+                    </div>
+                    <span>
+                      正在扫描队列 {scanProgress.completed}/{scanProgress.total}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="toolbar-side">
+                <div className="search-box toolbar-search">
+                  <input
+                    type="text"
+                    className="queue-filter-input"
+                    placeholder="过滤仓库 / workflow / 分支…"
+                    value={filterQuery}
+                    onChange={(event) => setFilterQuery(event.target.value)}
+                  />
+                  {filterQuery && (
+                    <button
+                      type="button"
+                      className="search-clear"
+                      aria-label="清空过滤"
+                      onClick={() => setFilterQuery('')}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {skippedRepos > 0 && (
+              <div className="queue-skip-hint">
+                ⚠️ {skippedRepos} 个仓库无法读取（未启用 Actions 或令牌缺少 repo 权限），其排队状态未计入。
+              </div>
+            )}
+
+            {filteredRuns.length === 0 ? (
+              <div className="empty-state queue-empty">
+                <span className="queue-empty-icon">🎉</span>
+                <p>当前没有排队等待的 workflow。</p>
+                <p className="queue-empty-sub">
+                  {filterQuery.trim() ? '换个过滤词试试，或清空过滤。' : '所有已触发的工作流要么已完成，要么正在执行。'}
+                </p>
+              </div>
+            ) : (
+              <ol className="queue-list">
+                {filteredRuns.map((run, index) => {
+                  const waitMs = waitMsOf(run, now)
+                  const tier = waitTierOf(waitMs)
+                  const ratio = waitRatioOf(run, now, longestWait)
+                  return (
+                    <li key={run.id} className={`queue-row is-${tier}`}>
+                      <span className="queue-rank">#{index + 1}</span>
+                      <div className="queue-row-main">
+                        <div className="queue-row-title">
+                          <a
+                            className="queue-repo"
+                            href={`https://github.com/${org.trim()}/${run.repoName}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {run.repoName}
+                          </a>
+                          <span className="queue-workflow">{run.displayTitle || run.name}</span>
+                        </div>
+                        <div className="queue-row-tags">
+                          <span className="repo-tag is-topic">🌿 {run.headBranch}</span>
+                          <span className="repo-tag is-topic">{eventLabel(run.event)}</span>
+                          {run.actor && <span className="repo-tag is-access user">@{run.actor}</span>}
+                          <span className="repo-tag is-public">run #{run.runNumber}</span>
+                        </div>
+                        <div className="wait-bar-track">
+                          <div className={`wait-bar-fill is-${tier}`} style={{ width: `${ratio * 100}%` }} />
+                        </div>
+                      </div>
+                      <a
+                        className="queue-wait"
+                        href={run.htmlUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="在 GitHub 打开运行详情"
+                      >
+                        <span className={`queue-wait-time is-${tier}`}>{formatWaitDuration(waitMs)}</span>
+                        <span className="queue-external">↗</span>
+                      </a>
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+          </section>
+        </>
+      )}
+    </main>
+  )
+}

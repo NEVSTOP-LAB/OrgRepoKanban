@@ -1,4 +1,4 @@
-export type PageId = 'home' | 'permissions' | 'secrets'
+export type PageId = 'home' | 'permissions' | 'secrets' | 'runners'
 
 export interface HomePageProps {
   onNavigate: (page: PageId) => void
@@ -12,12 +12,12 @@ export function HomePage({ onNavigate }: HomePageProps) {
           <span className="eyebrow">NEVSTOP-LAB 组织管理</span>
           <h1>组织仓库治理工具集</h1>
           <p>
-            统一的 GitHub 组织管理入口：权限看板与 Secret 配置一站完成。
+            统一的 GitHub 组织管理入口：权限看板、Secret 配置与 Actions Runner 监控一站完成。
           </p>
           <div className="badge-row">
             <span className="badge">权限看板：拖拽式批量权限调整</span>
             <span className="badge">Secret 管理：私有仓库密钥配置</span>
-            <span className="badge">仅需组织管理员 PAT 令牌</span>
+            <span className="badge">Runner 看板：运行与排队监控</span>
           </div>
         </div>
 
@@ -74,6 +74,23 @@ export function HomePage({ onNavigate }: HomePageProps) {
                 <span className="repo-tag is-private">私有仓库</span>
                 <span className="repo-tag is-topic">拖拽操作</span>
                 <span className="repo-tag is-access user">手动输入值</span>
+              </span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            className="home-nav-card"
+            onClick={() => onNavigate('runners')}
+          >
+            <span className="home-nav-icon">🏃</span>
+            <div className="home-nav-body">
+              <h3>Runner 看板</h3>
+              <p>查看组织自托管 Runner 的在线与忙碌状态，追踪排队等待执行的 workflow。</p>
+              <span className="home-nav-tags">
+                <span className="repo-tag is-public">只读监控</span>
+                <span className="repo-tag is-topic">排队队列</span>
+                <span className="repo-tag is-access team">自动刷新</span>
               </span>
             </div>
           </button>

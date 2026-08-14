@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import App from './App'
 import { HomePage, type PageId } from './components/HomePage'
+import { RunnerBoard } from './components/RunnerBoard'
 import { SecretManager } from './components/SecretManager'
 
 /**
@@ -10,7 +11,8 @@ import { SecretManager } from './components/SecretManager'
  * Manages page-level navigation between:
  *  - home        → HomePage (landing / nav)
  *  - permissions → App (existing Permission Kanban)
- *  - secrets     → SecretManager (new Secret management)
+ *  - secrets     → SecretManager (Secret management)
+ *  - runners     → RunnerBoard (Actions runner & queue monitoring)
  *
  * The existing App component is rendered unchanged when permissions is active.
  * A thin back-navigation bar is rendered above it so users can return home.
@@ -24,6 +26,10 @@ export function Root() {
 
   if (page === 'secrets') {
     return <SecretManager onBack={() => setPage('home')} />
+  }
+
+  if (page === 'runners') {
+    return <RunnerBoard onBack={() => setPage('home')} />
   }
 
   // permissions — wrap the existing App unchanged

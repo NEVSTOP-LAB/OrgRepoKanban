@@ -276,8 +276,9 @@ describe('GithubClient', () => {
 
     const client = new GithubClient('token-value', 'acme')
     const runs = await client.listQueuedWorkflowRuns('repo-a')
+    expect(runs).not.toBeNull()
     expect(runs).toHaveLength(1)
-    expect(runs[0]).toMatchObject({
+    expect(runs![0]).toMatchObject({
       id: 9001,
       repoName: 'repo-a',
       displayTitle: 'CI / test',
@@ -297,7 +298,7 @@ describe('GithubClient', () => {
       )
 
       const client = new GithubClient('token-value', 'acme')
-      await expect(client.listQueuedWorkflowRuns('repo-a')).resolves.toEqual([])
+      await expect(client.listQueuedWorkflowRuns('repo-a')).resolves.toBe(null)
     }
   })
 

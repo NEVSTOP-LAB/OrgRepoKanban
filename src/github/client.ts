@@ -254,7 +254,8 @@ export class GithubClient {
     return allRunners
   }
 
-  async listQueuedWorkflowRuns(repoName: string): Promise<QueuedWorkflowRun[]> {
+  /** 仓库不可读取（未启用 Actions / 无权限 / 不存在）时返回 null，与「无排队」区分 */
+  async listQueuedWorkflowRuns(repoName: string): Promise<QueuedWorkflowRun[] | null> {
     try {
       const allRuns: QueuedWorkflowRun[] = []
       let next: string | null =
@@ -287,10 +288,10 @@ export class GithubClient {
 
       return allRuns
     } catch (error) {
-      // 仓库未启用 Actions / 令牌无权限 / 仓库不存在时静默跳过
+      // 仓库未启用 Actions / 令牌无权限 / 仓库不存在 → null（UI 计入跳过）
       const status = (error as { status?: number }).status
       if (status === 403 || status === 404 || status === 409) {
-        return []
+        return null
       }
 
       throw error
