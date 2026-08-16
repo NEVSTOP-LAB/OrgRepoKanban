@@ -316,6 +316,102 @@ describe('GithubClient', () => {
     })
   })
 
+  it('maps in-progress jobs to busy runners and filters by runner name', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            total_count: 1,
+            workflow_runs: [
+              {
+                id: 8001,
+                name: 'CI',
+                display_title: 'CI / deploy',
+                run_number: 99,
+                event: 'push',
+                head_branch: 'main',
+                head_sha: 'deadbeef',
+                html_url: 'https://github.com/acme/repo-a/actions/runs/8001',
+                created_at: '2025-01-01T10:00:00Z',
+                actor: { login: 'alice' },
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            total_count: 2,
+            jobs: [
+              {
+                id: 7001,
+                run_id: 8001,
+                name: 'deploy',
+                status: 'in_progress',
+                started_at: '2025-01-01T10:00:05Z',
+                html_url: 'https://github.com/acme/repo-a/actions/runs/8001/job/7001',
+                runner_name: 'win-1',
+              },
+              {
+                id: 7002,
+                run_id: 8001,
+                name: 'lint',
+                status: 'in_progress',
+                started_at: '2025-01-01T10:00:06Z',
+                html_url: 'https://github.com/acme/repo-a/actions/runs/8001/job/7002',
+                runner_name: 'mac-1',
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      )
+
+    const client = new GithubClient('token-value', 'acme')
+    const jobs = await client.listBusyRunnerJobs('repo-a', new Set(['win-1']))
+    expect(jobs).not.toBeNull()
+    expect(jobs).toHaveLength(1)
+    expect(jobs![0]).toMatchObject({
+      runnerName: 'win-1',
+      repoName: 'repo-a',
+      workflowName: 'CI',
+      displayTitle: 'CI / deploy',
+      jobName: 'deploy',
+      runNumber: 99,
+      htmlUrl: 'https://github.com/acme/repo-a/actions/runs/8001',
+      startedAt: '2025-01-01T10:00:05Z',
+    })
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/repos/acme/repo-a/actions/runs?status=in_progress')
+    expect(fetchMock.mock.calls[1]?.[0]).toContain('/repos/acme/repo-a/actions/runs/8001/jobs')
+  })
+
+  it('skips API calls and returns empty when runner name set is empty', async () => {
+    const client = new GithubClient('token-value', 'acme')
+    const jobs = await client.listBusyRunnerJobs('repo-a', new Set())
+    expect(jobs).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('returns null for unreadable repos in busy runner jobs', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ message: 'unavailable' }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const client = new GithubClient('token-value', 'acme')
+    await expect(client.listBusyRunnerJobs('repo-a', new Set(['win-1']))).resolves.toBe(null)
+  })
+
   it('rethrows 403 responses that carry rate-limit headers', async () => {
     const cases: Array<Record<string, string>> = [
       { 'x-ratelimit-remaining': '0' },

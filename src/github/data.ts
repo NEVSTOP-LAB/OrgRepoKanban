@@ -74,6 +74,26 @@ export interface OrgRunner {
   status: 'online' | 'offline'
   busy: boolean
   labels: RunnerLabel[]
+  /** 忙碌 runner 当前正在执行的 job（由进行中 workflow runs 的 job 匹配而来） */
+  currentJob?: RunnerJobInfo | null
+}
+
+/** 忙碌 runner 正在执行的 workflow job 摘要（点击跳转到 GitHub 上的运行详情页） */
+export interface RunnerJobInfo {
+  /** 执行该 job 的 runner 名称，用于与 OrgRunner.name 匹配 */
+  runnerName: string
+  repoName: string
+  /** workflow 名称（run.name） */
+  workflowName: string
+  /** 运行标题（run.display_title），优先用于展示 */
+  displayTitle: string
+  /** job 名称 */
+  jobName: string
+  runNumber: number
+  /** 运行详情页链接（GitHub Actions 页面） */
+  htmlUrl: string
+  /** job 开始时间 */
+  startedAt: string
 }
 
 export interface QueuedWorkflowRun {

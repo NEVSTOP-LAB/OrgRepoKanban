@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { OrgRunner, QueuedWorkflowRun } from '../github/data'
 import {
+  attachCurrentJobs,
   classifyRunners,
   eventLabel,
   formatWaitDuration,
@@ -64,6 +65,47 @@ describe('classifyRunners', () => {
 
   it('空列表返回三列空数组', () => {
     expect(classifyRunners([])).toEqual({ idle: [], busy: [], offline: [] })
+  })
+})
+
+describe('attachCurrentJobs', () => {
+  it('仅给忙碌 runner 挂载匹配的当前 job', () => {
+    const runners = [
+      makeRunner({ id: 1, name: 'linux-1', busy: false }),
+      makeRunner({ id: 2, name: 'win-1', busy: true }),
+    ]
+    const jobs = [
+      {
+        runnerName: 'win-1',
+        repoName: 'repo-a',
+        workflowName: 'CI',
+        displayTitle: 'CI / deploy',
+        jobName: 'deploy',
+        runNumber: 99,
+        htmlUrl: 'https://github.com/acme/repo-a/actions/runs/8001',
+        startedAt: '2025-01-01T10:00:05Z',
+      },
+    ]
+
+    const result = attachCurrentJobs(runners, jobs)
+    expect(result[1]?.currentJob).toMatchObject({ runnerName: 'win-1', jobName: 'deploy' })
+  })
+
+  it('空闲 runner 不挂载当前 job，忙碌 runner 无匹配时置为 null', () => {
+    const runners = [
+      makeRunner({ id: 1, name: 'linux-1', busy: false }),
+      makeRunner({ id: 2, name: 'win-1', busy: true }),
+    ]
+
+    const result = attachCurrentJobs(runners, [])
+    expect(result[0]?.currentJob).toBeUndefined()
+    expect(result[1]?.currentJob).toBeNull()
+  })
+
+  it('不修改原数组', () => {
+    const runners = [makeRunner({ id: 1, name: 'win-1', busy: true })]
+    attachCurrentJobs(runners, [])
+    expect(runners[0]?.currentJob).toBeUndefined()
   })
 })
 

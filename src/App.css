@@ -1429,6 +1429,45 @@
   animation: ops-pulse 1.6s ease-in-out infinite;
 }
 
+.runner-busy-link {
+  flex-shrink: 1;
+  min-width: 0;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 3px;
+  background: rgba(13, 110, 253, 0.07);
+  border: 1px solid rgba(13, 110, 253, 0.22);
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.runner-busy-link:hover {
+  background: rgba(13, 110, 253, 0.14);
+  border-color: rgba(13, 110, 253, 0.45);
+}
+
+.runner-busy-link .runner-busy-badge {
+  animation: none;
+}
+
+.runner-busy-workflow {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #0d6efd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runner-busy-link .queue-external {
+  flex-shrink: 0;
+  color: #0d6efd;
+}
 /* 排队队列面板 */
 .queue-summary {
   display: flex;
