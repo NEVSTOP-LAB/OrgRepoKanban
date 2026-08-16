@@ -79,6 +79,12 @@ function stubConnectedApi(queuedByRepo: Record<string, Array<Record<string, unkn
     if (url.includes('/orgs/acme/repos')) {
       return jsonResponse(REPOS)
     }
+    if (url.includes('/actions/runs?status=in_progress')) {
+      return jsonResponse({ total_count: 0, workflow_runs: [] })
+    }
+    if (url.includes('/jobs')) {
+      return jsonResponse({ total_count: 0, jobs: [] })
+    }
     if (url.includes('/actions/runs?status=queued')) {
       const repoName = REPOS.find((repo) => url.includes(`/repos/acme/${repo.name}/`))?.name
       return jsonResponse(queuedRunResponse(repoName ?? 'repo-a', queuedByRepo[repoName ?? 'repo-a'] ?? []))
@@ -171,5 +177,79 @@ describe('RunnerBoard', () => {
     await waitFor(() =>
       expect(screen.getByText(/1 个仓库扫描失败（限流或网络问题）/)).toBeInTheDocument(),
     )
+  })
+
+  it('shows current workflow link on busy runners', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/actions/runners')) {
+        return jsonResponse(RUNNERS)
+      }
+      if (url.includes('/orgs/acme/repos')) {
+        return jsonResponse(REPOS)
+      }
+      if (url.includes('/actions/runs?status=in_progress')) {
+        return jsonResponse({
+          total_count: 1,
+          workflow_runs: [
+            {
+              id: 8001,
+              name: 'CI',
+              display_title: 'CI / deploy',
+              run_number: 99,
+              event: 'push',
+              head_branch: 'main',
+              head_sha: 'deadbeef',
+              html_url: 'https://github.com/acme/repo-a/actions/runs/8001',
+              created_at: '2025-01-01T10:00:00Z',
+              actor: { login: 'alice' },
+            },
+          ],
+        })
+      }
+      if (url.includes('/actions/runs/8001/jobs')) {
+        return jsonResponse({
+          total_count: 1,
+          jobs: [
+            {
+              id: 7001,
+              run_id: 8001,
+              name: 'deploy',
+              status: 'in_progress',
+              started_at: '2025-01-01T10:00:05Z',
+              html_url: 'https://github.com/acme/repo-a/actions/runs/8001/job/7001',
+              runner_name: 'win-1',
+            },
+          ],
+        })
+      }
+      if (url.includes('/actions/runs?status=queued')) {
+        return jsonResponse(queuedRunResponse('repo-a', []))
+      }
+      throw new Error('unexpected request: ' + url)
+    })
+
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByText('win-1')).toBeInTheDocument())
+    const link = await screen.findByRole('link', { name: /CI \/ deploy/ })
+    expect(link).toHaveAttribute('href', 'https://github.com/acme/repo-a/actions/runs/8001')
+    expect(link).toHaveAttribute('target', '_blank')
+  })
+
+  it('defaults auto refresh to 3 minutes with 30s/1min/3min/5min options', async () => {
+    stubConnectedApi({})
+
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByText('linux-1')).toBeInTheDocument())
+    const select = screen.getByLabelText('自动刷新周期') as HTMLSelectElement
+    expect(select.value).toBe('180')
+    expect(Array.from(select.options).map((option) => option.value)).toEqual([
+      '30',
+      '60',
+      '180',
+      '300',
+    ])
   })
 })

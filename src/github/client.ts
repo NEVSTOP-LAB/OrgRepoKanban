@@ -9,6 +9,7 @@ import type {
   RepoAccessEntry,
   RepoCollaboratorAccess,
   RepoTeamAccess,
+  RunnerJobInfo,
 } from './data'
 import type { OrgSecret, RepoSecretInfo } from '../domain/secret'
 import { encryptSecret } from './secrets'
@@ -72,6 +73,16 @@ interface WorkflowRunResponse {
   html_url: string
   created_at: string
   actor?: { login?: string } | null
+}
+
+interface WorkflowRunJobResponse {
+  id: number
+  name: string
+  status: string
+  started_at: string
+  html_url: string
+  /** 自托管 runner 的名称；托管 runner 为 null */
+  runner_name?: string | null
 }
 
 export interface TeamRepoPermission {
@@ -322,6 +333,89 @@ export class GithubClient {
     }
   }
 
+  /**
+   * 汇总指定仓库内正在执行的 jobs，仅保留 runner 名称匹配的条目，
+   * 用于在 Runner 看板展示「忙碌 runner 当前运行的 workflow」并可跳转到 GitHub 运行详情页。
+   * 仓库不可读（未启用 Actions / 无权限 / 不存在）时返回 null，与 listQueuedWorkflowRuns 口径一致；
+   * runner 名单为空时直接返回 []（不发起任何请求）。
+   */
+  async listBusyRunnerJobs(
+    repoName: string,
+    runnerNames: ReadonlySet<string>,
+  ): Promise<RunnerJobInfo[] | null> {
+    if (runnerNames.size === 0) {
+      return []
+    }
+
+    try {
+      // 1. 分页读取 status=in_progress 的 workflow runs
+      const allRuns: QueuedWorkflowRun[] = []
+      let next: string | null =
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/runs?status=in_progress&per_page=100`
+
+      while (next) {
+        const response = await this.rawRequest(next)
+        const payload = (await this.parseJson(response)) as {
+          workflow_runs?: WorkflowRunResponse[]
+        } | null
+
+        for (const run of payload?.workflow_runs ?? []) {
+          allRuns.push({
+            id: run.id,
+            repoName,
+            name: run.name,
+            displayTitle: run.display_title ?? run.name,
+            runNumber: run.run_number,
+            event: run.event,
+            headBranch: run.head_branch,
+            headSha: run.head_sha,
+            htmlUrl: run.html_url,
+            createdAt: run.created_at,
+            actor: run.actor?.login ?? '',
+          })
+        }
+
+        next = this.extractNextUrl(response.headers.get('link'))
+      }
+
+      // 2. 并行读取每个 run 的 jobs，仅保留 runner_name 命中名单的条目
+      const matchedByRun = await Promise.all(
+        allRuns.map(async (run) => {
+          try {
+            const jobs = await this.fetchRunJobs(repoName, run.id)
+            return jobs
+              .filter((job) => runnerNames.has(job.runner_name ?? ''))
+              .map((job): RunnerJobInfo => ({
+                runnerName: job.runner_name ?? '',
+                repoName,
+                workflowName: run.name,
+                displayTitle: run.displayTitle,
+                jobName: job.name,
+                runNumber: run.runNumber,
+                htmlUrl: run.htmlUrl,
+                startedAt: job.started_at,
+              }))
+          } catch {
+            // 单个 run 的 jobs 读取失败不阻塞整体扫描，下次刷新会自动重试
+            return [] as RunnerJobInfo[]
+          }
+        }),
+      )
+
+      return matchedByRun.flat()
+    } catch (error) {
+      // 与 listQueuedWorkflowRuns 相同的「仓库不可读」判定
+      const status = (error as { status?: number }).status
+      const unavailable =
+        status === 404 || status === 409 || (status === 403 && !isRateLimitedError(error))
+      if (unavailable) {
+        return null
+      }
+
+      throw error
+    }
+  }
+
   // ── Actions secrets ────────────────────────────────────────────────────
 
   async listOrgSecrets(): Promise<OrgSecret[]> {
@@ -544,6 +638,24 @@ export class GithubClient {
     return 'none'
   }
 
+  /** 分页读取单个 workflow run 的全部 jobs（原始响应，供 listBusyRunnerJobs 过滤 runner 匹配项） */
+  private async fetchRunJobs(
+    repoName: string,
+    runId: number,
+  ): Promise<WorkflowRunJobResponse[]> {
+    const allJobs: WorkflowRunJobResponse[] = []
+    let next: string | null =
+      `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/runs/${runId}/jobs?per_page=100`
+
+    while (next) {
+      const response = await this.rawRequest(next)
+      const payload = (await this.parseJson(response)) as { jobs?: WorkflowRunJobResponse[] } | null
+      allJobs.push(...(payload?.jobs ?? []))
+      next = this.extractNextUrl(response.headers.get('link'))
+    }
+
+    return allJobs
+  }
   private extractNextUrl(linkHeader: string | null): string | null {
     if (!linkHeader) {
       return null

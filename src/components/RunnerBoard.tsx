@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { GithubClient, isRateLimitedError } from '../github/client'
-import type { GithubRepo, OrgRunner, QueuedWorkflowRun } from '../github/data'
+import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RunnerJobInfo } from '../github/data'
 import {
+  attachCurrentJobs,
   classifyRunners,
   eventLabel,
   formatWaitDuration,
@@ -32,11 +33,14 @@ const RUNNER_COLUMNS = [
 ] as const
 
 const AUTO_REFRESH_OPTIONS = [
-  { seconds: 0, label: '关闭' },
-  { seconds: 15, label: '15 秒' },
   { seconds: 30, label: '30 秒' },
-  { seconds: 60, label: '60 秒' },
+  { seconds: 60, label: '1 分钟' },
+  { seconds: 180, label: '3 分钟' },
+  { seconds: 300, label: '5 分钟' },
 ]
+
+/** 自动刷新默认周期：3 分钟 */
+const DEFAULT_AUTO_REFRESH_SECONDS = 180
 
 const MAX_RUNNER_LABELS = 4
 
@@ -71,7 +75,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
 
   // 视图选项
   const [recentOnly, setRecentOnly] = useState(true)
-  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(30)
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(DEFAULT_AUTO_REFRESH_SECONDS)
   const [filterQuery, setFilterQuery] = useState('')
   const [now, setNow] = useState(() => Date.now())
 
@@ -81,9 +85,15 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
 
   // ── 数据加载 ─────────────────────────────────────────────────────────
 
-  const scanQueued = useCallback(async (activeClient: GithubClient, repoList: GithubRepo[], epoch: number) => {
+  const scanQueued = useCallback(async (
+    activeClient: GithubClient,
+    repoList: GithubRepo[],
+    epoch: number,
+    runnerNames: ReadonlySet<string>,
+  ) => {
     const targets = selectReposForScan(repoList, Date.now(), recentOnlyRef.current)
     const collected: QueuedWorkflowRun[] = []
+    const busyJobs: RunnerJobInfo[] = []
     let skipped = 0
     let failed = 0
     let completed = 0
@@ -100,12 +110,18 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
       while (queue.length > 0) {
         const repo = queue.shift()!
         try {
-          const runs = await activeClient.listQueuedWorkflowRuns(repo.name)
-          if (runs === null) {
+          const [queued, jobs] = await Promise.all([
+            activeClient.listQueuedWorkflowRuns(repo.name),
+            activeClient.listBusyRunnerJobs(repo.name, runnerNames),
+          ])
+          if (queued === null) {
             // 仓库不可读（未启用 Actions / 无权限 / 不存在）
             skipped += 1
           } else {
-            collected.push(...runs)
+            collected.push(...queued)
+          }
+          if (jobs !== null) {
+            busyJobs.push(...jobs)
           }
         } catch {
           // 限流 / 5xx / 网络错误：计入扫描失败，与「仓库不可读」区分展示
@@ -125,6 +141,8 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, () => worker()))
     if (epoch === scanEpochRef.current) {
       setScanProgress(null)
+      // 把匹配到的「进行中 job」挂到对应忙碌 runner 上，用于显示当前 workflow 链接
+      setRunners((prev) => attachCurrentJobs(prev, busyJobs))
     }
   }, [])
 
@@ -165,7 +183,13 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
         setRunnersUnavailable(false)
       }
 
-      await scanQueued(activeClient, repoList, epoch)
+      // runner 名集合用于匹配「进行中 job」；列表不可读时为空集合，跳过 busy job 扫描
+      await scanQueued(
+        activeClient,
+        repoList,
+        epoch,
+        new Set((runnerList ?? []).map((runner) => runner.name)),
+      )
 
       if (announce && epoch === scanEpochRef.current) {
         setNotice({
@@ -424,9 +448,24 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                                 </span>
                               )}
                             </div>
-                            {column.key === 'busy' && (
-                              <span className="runner-busy-badge">RUN</span>
-                            )}
+                            {column.key === 'busy' &&
+                              (runner.currentJob ? (
+                                <a
+                                  className="runner-busy-link"
+                                  href={runner.currentJob.htmlUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title="在 GitHub 打开该 workflow 的运行详情"
+                                >
+                                  <span className="runner-busy-badge">RUN</span>
+                                  <span className="runner-busy-workflow">
+                                    {runner.currentJob.displayTitle || runner.currentJob.workflowName}
+                                  </span>
+                                  <span className="queue-external">↗</span>
+                                </a>
+                              ) : (
+                                <span className="runner-busy-badge">RUN</span>
+                              ))}
                           </div>
                         ))
                       )}

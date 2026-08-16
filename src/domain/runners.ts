@@ -1,4 +1,5 @@
-import type { GithubRepo, OrgRunner, QueuedWorkflowRun } from '../github/data'
+import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RunnerJobInfo } from '../github/data'
+
 
 // ── Runner 看板 ──────────────────────────────────────────────────────────
 
@@ -55,6 +56,19 @@ export function runnerStats(runners: OrgRunner[]): RunnerStats {
     online,
     loadRatio: online === 0 ? 0 : busy / online,
   }
+}
+
+/** 按 runner 名称把「进行中 job」挂到对应忙碌 runner 上；非忙碌 runner 不挂载 */
+export function attachCurrentJobs(
+  runners: OrgRunner[],
+  jobs: RunnerJobInfo[],
+): OrgRunner[] {
+  const jobByRunner = new Map(jobs.map((job) => [job.runnerName, job]))
+  return runners.map((runner) =>
+    runner.busy
+      ? { ...runner, currentJob: jobByRunner.get(runner.name) ?? null }
+      : runner,
+  )
 }
 
 // ── 队列扫描范围 ─────────────────────────────────────────────────────────
