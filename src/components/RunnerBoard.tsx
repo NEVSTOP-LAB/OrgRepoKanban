@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { GithubClient, isRateLimitedError } from '../github/client'
-import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RunnerJobInfo } from '../github/data'
+import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RecentWorkflowRun, RunnerJobInfo } from '../github/data'
 import {
   attachCurrentJobs,
   classifyRunners,
+  dedupeLatestWorkflowRuns,
   eventLabel,
+  filterRecentRunsByStatus,
   formatWaitDuration,
   longestWaitMs,
   matchesRunFilter,
+  mergeRecentRuns,
   osIcon,
   runnerStats,
   selectReposForScan,
@@ -69,12 +72,14 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const [runners, setRunners] = useState<OrgRunner[]>([])
   const [runnersUnavailable, setRunnersUnavailable] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedWorkflowRun[]>([])
+  const [recentRuns, setRecentRuns] = useState<RecentWorkflowRun[]>([])
   const [scanProgress, setScanProgress] = useState<{ completed: number; total: number } | null>(null)
   const [skippedRepos, setSkippedRepos] = useState(0)
   const [scanFailures, setScanFailures] = useState(0)
 
   // 视图选项
   const [recentOnly, setRecentOnly] = useState(true)
+  const [recentSuccessOnly, setRecentSuccessOnly] = useState(false)
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(DEFAULT_AUTO_REFRESH_SECONDS)
   const [filterQuery, setFilterQuery] = useState('')
   const [now, setNow] = useState(() => Date.now())
@@ -146,6 +151,31 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     }
   }, [])
 
+  const refreshRecentRuns = useCallback(async (activeClient: GithubClient, repoList: GithubRepo[]) => {
+    const targets = selectReposForScan(repoList, Date.now(), recentOnlyRef.current)
+    const collected: RecentWorkflowRun[] = []
+
+    for (const repo of targets) {
+      try {
+        const runs = await activeClient.listRecentWorkflowRuns(repo.name)
+        if (runs) {
+          collected.push(...runs)
+        }
+      } catch {
+        // 历史记录拉取失败不阻塞现有队列与 Runner 显示；下一次刷新会重试
+      }
+    }
+
+    const nextRuns = dedupeLatestWorkflowRuns(collected)
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    setRecentRuns((prev) =>
+      mergeRecentRuns(prev, nextRuns).filter((r) => {
+        const ts = Date.parse(r.completedAt ?? r.startedAt)
+        return Number.isNaN(ts) || ts >= cutoff
+      }),
+    )
+  }, [])
+
   const loadAll = useCallback(async (activeClient: GithubClient, announce: boolean) => {
     if (refreshingRef.current) {
       return
@@ -190,6 +220,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
         epoch,
         new Set((runnerList ?? []).map((runner) => runner.name)),
       )
+      await refreshRecentRuns(activeClient, repoList)
 
       if (announce && epoch === scanEpochRef.current) {
         setNotice({
@@ -210,7 +241,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
       refreshingRef.current = false
       setRefreshing(false)
     }
-  }, [scanQueued])
+  }, [refreshRecentRuns, scanQueued])
 
   // ── 首次加载与自动刷新 ─────────────────────────────────────────────
 
@@ -257,6 +288,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const filteredRuns = filterQuery.trim()
     ? queuedRuns.filter((run) => matchesRunFilter(run, filterQuery))
     : queuedRuns
+  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentSuccessOnly)
   const longestWait = longestWaitMs(filteredRuns, now)
 
   // ── 渲染 ─────────────────────────────────────────────────────────────
@@ -450,19 +482,21 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                             </div>
                             {column.key === 'busy' &&
                               (runner.currentJob ? (
-                                <a
-                                  className="runner-busy-link"
-                                  href={runner.currentJob.htmlUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title="在 GitHub 打开该 workflow 的运行详情"
-                                >
+                                <>
                                   <span className="runner-busy-badge">RUN</span>
-                                  <span className="runner-busy-workflow">
-                                    {runner.currentJob.displayTitle || runner.currentJob.workflowName}
-                                  </span>
-                                  <span className="queue-external">↗</span>
-                                </a>
+                                  <a
+                                    className="runner-busy-link"
+                                    href={runner.currentJob.htmlUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title="在 GitHub 打开该 workflow 的运行详情"
+                                  >
+                                    <span className="runner-busy-workflow">
+                                      {runner.currentJob.displayTitle || runner.currentJob.workflowName}
+                                    </span>
+                                    <span className="queue-external">↗</span>
+                                  </a>
+                                </>
                               ) : (
                                 <span className="runner-busy-badge">RUN</span>
                               ))}
@@ -609,7 +643,63 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                 })}
               </ol>
             )}
-      </section>
-    </main>
-  )
+          </section>
+
+          <section className="board-panel recent-panel">
+            <div className="section-title">
+              <h2>📊 最近 30 天运行记录</h2>
+              <p>按时间倒序展示每个 workflow 的最新运行，使用紧凑矩阵卡片。</p>
+            </div>
+
+            <div className="recent-toolbar">
+              <label className="recent-success-toggle">
+                <input
+                  type="checkbox"
+                  checked={recentSuccessOnly}
+                  onChange={(event) => setRecentSuccessOnly(event.target.checked)}
+                />
+                仅显示成功运行
+              </label>
+            </div>
+
+            {filteredRecentRuns.length === 0 ? (
+              <div className="empty-state queue-empty">
+                <span className="queue-empty-icon">🧭</span>
+                <p>最近 30 天内没有可展示的 action 记录。</p>
+              </div>
+            ) : (
+              <div className="recent-grid">
+                {filteredRecentRuns.map((run) => (
+                  <a
+                    key={`${run.repoName}:${run.workflowName}:${run.id}`}
+                    className={`recent-card ${run.success ? 'is-success' : 'is-failure'}`}
+                    href={run.htmlUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="在 GitHub 打开该 workflow 的运行详情"
+                  >
+                    <div className="recent-card-topline">
+                      <span className="recent-status-badge">
+                        {run.success ? '成功' : '失败'}
+                      </span>
+                      <span className="recent-time">
+                        {new Date(run.completedAt ?? run.startedAt).toLocaleDateString('zh-CN')}
+                      </span>
+                    </div>
+                    <strong className="recent-card-title">{run.displayTitle || run.workflowName}</strong>
+                    <div className="recent-card-meta">
+                      <span>{run.repoName}</span>
+                      <span>#{run.runNumber}</span>
+                    </div>
+                    <div className="recent-card-footer">
+                      <span>{run.headBranch}</span>
+                      <span>{eventLabel(run.event)}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            )}
+          </section>
+      </main>
+    )
 }

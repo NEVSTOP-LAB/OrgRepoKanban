@@ -4,12 +4,15 @@ import type { OrgRunner, QueuedWorkflowRun } from '../github/data'
 import {
   attachCurrentJobs,
   classifyRunners,
+  dedupeLatestWorkflowRuns,
   eventLabel,
+  filterRecentRunsByStatus,
   formatWaitDuration,
   fuzzyIncludes,
   isRecentlyPushed,
   longestWaitMs,
   matchesRunFilter,
+  mergeRecentRuns,
   osIcon,
   runnerStats,
   selectReposForScan,
@@ -245,6 +248,147 @@ describe('fuzzyIncludes / matchesRunFilter', () => {
     expect(matchesRunFilter(run, 'deploy')).toBe(true)
     expect(matchesRunFilter(run, 'release')).toBe(true)
     expect(matchesRunFilter(run, 'ghost')).toBe(false)
+  })
+})
+
+describe('recent workflow run helpers', () => {
+  it('按 workflow 去重并按最新完成时间排序', () => {
+    const runs = [
+      {
+        id: 1,
+        repoName: 'repo-a',
+        workflowName: 'CI',
+        displayTitle: 'CI',
+        runNumber: 11,
+        event: 'push',
+        headBranch: 'main',
+        htmlUrl: 'https://example.com/run/1',
+        startedAt: '2025-01-01T09:00:00Z',
+        completedAt: '2025-01-01T09:10:00Z',
+        createdAt: '2025-01-01T09:00:00Z',
+        actor: 'alice',
+        status: 'completed',
+        conclusion: 'failure',
+        success: false,
+      },
+      {
+        id: 2,
+        repoName: 'repo-a',
+        workflowName: 'CI',
+        displayTitle: 'CI',
+        runNumber: 12,
+        event: 'push',
+        headBranch: 'main',
+        htmlUrl: 'https://example.com/run/2',
+        startedAt: '2025-01-01T10:00:00Z',
+        completedAt: '2025-01-01T10:05:00Z',
+        createdAt: '2025-01-01T10:00:00Z',
+        actor: 'alice',
+        status: 'completed',
+        conclusion: 'success',
+        success: true,
+      },
+      {
+        id: 3,
+        repoName: 'repo-b',
+        workflowName: 'Deploy',
+        displayTitle: 'Deploy',
+        runNumber: 5,
+        event: 'workflow_dispatch',
+        headBranch: 'release',
+        htmlUrl: 'https://example.com/run/3',
+        startedAt: '2025-01-01T08:00:00Z',
+        completedAt: '2025-01-01T08:30:00Z',
+        createdAt: '2025-01-01T08:00:00Z',
+        actor: 'bob',
+        status: 'completed',
+        conclusion: 'success',
+        success: true,
+      },
+    ]
+
+    expect(dedupeLatestWorkflowRuns(runs).map((run) => run.id)).toEqual([2, 3])
+  })
+
+  it('过滤成功运行时仅保留 success=true 的卡片', () => {
+    const runs = [
+      {
+        id: 1,
+        repoName: 'repo-a',
+        workflowName: 'CI',
+        displayTitle: 'CI',
+        runNumber: 1,
+        event: 'push',
+        headBranch: 'main',
+        htmlUrl: 'https://example.com/run/1',
+        startedAt: '2025-01-01T09:00:00Z',
+        completedAt: '2025-01-01T09:10:00Z',
+        createdAt: '2025-01-01T09:00:00Z',
+        actor: 'alice',
+        status: 'completed',
+        conclusion: 'success',
+        success: true,
+      },
+      {
+        id: 2,
+        repoName: 'repo-b',
+        workflowName: 'Deploy',
+        displayTitle: 'Deploy',
+        runNumber: 2,
+        event: 'workflow_dispatch',
+        headBranch: 'prod',
+        htmlUrl: 'https://example.com/run/2',
+        startedAt: '2025-01-01T09:20:00Z',
+        completedAt: '2025-01-01T09:30:00Z',
+        createdAt: '2025-01-01T09:20:00Z',
+        actor: 'bob',
+        status: 'completed',
+        conclusion: 'failure',
+        success: false,
+      },
+    ]
+
+    expect(filterRecentRunsByStatus(runs, true).map((run) => run.id)).toEqual([1])
+    expect(filterRecentRunsByStatus(runs, false).map((run) => run.id)).toEqual([1, 2])
+  })
+
+  it('合并增量更新时保留最新记录并去重', () => {
+    const current = [{
+      id: 1,
+      repoName: 'repo-a',
+      workflowName: 'CI',
+      displayTitle: 'CI',
+      runNumber: 1,
+      event: 'push',
+      headBranch: 'main',
+      htmlUrl: 'https://example.com/run/1',
+      startedAt: '2025-01-01T09:00:00Z',
+      completedAt: '2025-01-01T09:10:00Z',
+      createdAt: '2025-01-01T09:00:00Z',
+      actor: 'alice',
+      status: 'completed',
+      conclusion: 'success',
+      success: true,
+    }]
+    const incoming = [{
+      id: 2,
+      repoName: 'repo-a',
+      workflowName: 'CI',
+      displayTitle: 'CI',
+      runNumber: 2,
+      event: 'push',
+      headBranch: 'main',
+      htmlUrl: 'https://example.com/run/2',
+      startedAt: '2025-01-01T10:00:00Z',
+      completedAt: '2025-01-01T10:05:00Z',
+      createdAt: '2025-01-01T10:00:00Z',
+      actor: 'alice',
+      status: 'completed',
+      conclusion: 'success',
+      success: true,
+    }]
+
+    expect(mergeRecentRuns(current, incoming).map((run) => run.id)).toEqual([2])
   })
 })
 

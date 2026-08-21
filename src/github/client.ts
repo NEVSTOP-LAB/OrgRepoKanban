@@ -6,6 +6,7 @@ import type {
   OrgMember,
   OrgRunner,
   QueuedWorkflowRun,
+  RecentWorkflowRun,
   RepoAccessEntry,
   RepoCollaboratorAccess,
   RepoTeamAccess,
@@ -72,6 +73,10 @@ interface WorkflowRunResponse {
   head_sha: string
   html_url: string
   created_at: string
+  updated_at?: string | null
+  run_started_at?: string | null
+  status?: string
+  conclusion?: string | null
   actor?: { login?: string } | null
 }
 
@@ -339,6 +344,71 @@ export class GithubClient {
    * 仓库不可读（未启用 Actions / 无权限 / 不存在）时返回 null，与 listQueuedWorkflowRuns 口径一致；
    * runner 名单为空时直接返回 []（不发起任何请求）。
    */
+  async listRecentWorkflowRuns(
+    repoName: string,
+    cutoffMs = 30 * 24 * 60 * 60 * 1000,
+  ): Promise<RecentWorkflowRun[] | null> {
+    try {
+      const cutoff = Date.now() - cutoffMs
+      const allRuns: RecentWorkflowRun[] = []
+      let next: string | null = `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/runs?per_page=100`
+
+      while (next) {
+        const response = await this.rawRequest(next)
+        const payload = (await this.parseJson(response)) as {
+          workflow_runs?: WorkflowRunResponse[]
+        } | null
+
+        let pageHasRunsBeforeCutoff = false
+        for (const run of payload?.workflow_runs ?? []) {
+          const startedAt = run.run_started_at ?? run.created_at
+          const status = run.status ?? 'completed'
+          const completedAt = status === 'completed' ? (run.updated_at ?? run.created_at) : null
+          const timestamp = Date.parse(completedAt ?? startedAt)
+          if (!Number.isNaN(timestamp) && timestamp < cutoff) {
+            pageHasRunsBeforeCutoff = true
+            continue
+          }
+
+          allRuns.push({
+            id: run.id,
+            repoName,
+            workflowName: run.name,
+            displayTitle: run.display_title ?? run.name,
+            runNumber: run.run_number,
+            event: run.event,
+            headBranch: run.head_branch,
+            htmlUrl: run.html_url,
+            startedAt,
+            completedAt,
+            createdAt: run.created_at,
+            actor: run.actor?.login ?? '',
+            status,
+            conclusion: run.conclusion ?? null,
+            success: run.conclusion === 'success',
+          })
+        }
+
+        if (pageHasRunsBeforeCutoff) {
+          break
+        }
+
+        next = this.extractNextUrl(response.headers.get('link'))
+      }
+
+      return allRuns
+    } catch (error) {
+      const status = (error as { status?: number }).status
+      const unavailable =
+        status === 404 || status === 409 || (status === 403 && !isRateLimitedError(error))
+      if (unavailable) {
+        return null
+      }
+
+      throw error
+    }
+  }
+
   async listBusyRunnerJobs(
     repoName: string,
     runnerNames: ReadonlySet<string>,
