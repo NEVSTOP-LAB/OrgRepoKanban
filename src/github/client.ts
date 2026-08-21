@@ -359,11 +359,14 @@ export class GithubClient {
           workflow_runs?: WorkflowRunResponse[]
         } | null
 
+        let pageHasRunsBeforeCutoff = false
         for (const run of payload?.workflow_runs ?? []) {
           const startedAt = run.run_started_at ?? run.created_at
-          const completedAt = run.status === 'completed' ? (run.updated_at ?? run.created_at) : null
+          const status = run.status ?? 'completed'
+          const completedAt = status === 'completed' ? (run.updated_at ?? run.created_at) : null
           const timestamp = Date.parse(completedAt ?? startedAt)
           if (!Number.isNaN(timestamp) && timestamp < cutoff) {
+            pageHasRunsBeforeCutoff = true
             continue
           }
 
@@ -380,10 +383,14 @@ export class GithubClient {
             completedAt,
             createdAt: run.created_at,
             actor: run.actor?.login ?? '',
-            status: run.status ?? 'completed',
+            status,
             conclusion: run.conclusion ?? null,
             success: run.conclusion === 'success',
           })
+        }
+
+        if (pageHasRunsBeforeCutoff) {
+          break
         }
 
         next = this.extractNextUrl(response.headers.get('link'))

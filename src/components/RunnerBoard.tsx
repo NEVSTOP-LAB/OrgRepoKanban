@@ -167,7 +167,13 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     }
 
     const nextRuns = dedupeLatestWorkflowRuns(collected)
-    setRecentRuns((prev) => mergeRecentRuns(prev, nextRuns))
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    setRecentRuns((prev) =>
+      mergeRecentRuns(prev, nextRuns).filter((r) => {
+        const ts = Date.parse(r.completedAt ?? r.startedAt)
+        return Number.isNaN(ts) || ts >= cutoff
+      }),
+    )
   }, [])
 
   const loadAll = useCallback(async (activeClient: GithubClient, announce: boolean) => {
