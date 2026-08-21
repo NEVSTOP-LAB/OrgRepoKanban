@@ -89,6 +89,11 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const scanEpochRef = useRef(0)
   const refreshingRef = useRef(false)
   const recentOnlyRef = useRef(true)
+  const recentRunsRef = useRef<RecentWorkflowRun[]>([])
+
+  useEffect(() => {
+    recentRunsRef.current = recentRuns
+  }, [recentRuns])
 
   // ── 数据加载 ─────────────────────────────────────────────────────────
 
@@ -242,7 +247,13 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
         epoch,
         new Set((runnerList ?? []).filter((runner) => !isCopilotRunner(runner)).map((runner) => runner.name)),
       )
-      await refreshRecentRuns(activeClient, repoList, announce ? undefined : queuedRepoNames)
+      const runningRecentRepoNames = new Set(
+        recentRunsRef.current
+          .filter((run) => run.status !== 'completed')
+          .map((run) => run.repoName),
+      )
+      const recentRepoNames = new Set([...queuedRepoNames, ...runningRecentRepoNames])
+      await refreshRecentRuns(activeClient, repoList, announce ? undefined : recentRepoNames)
 
       if (announce && epoch === scanEpochRef.current) {
         setNotice({
