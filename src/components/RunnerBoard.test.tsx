@@ -523,4 +523,46 @@ describe('RunnerBoard', () => {
       '300',
     ])
   })
+
+  it('队列支持按仓库名 / 触发时间本地重排，无需重新连接', async () => {
+    stubConnectedApi({
+      'repo-a': [
+        { id: 9001, name: 'CI', display_title: 'CI / a-new', created_at: '2025-01-01T10:00:00Z', head_branch: 'main' },
+        { id: 9002, name: 'CI', display_title: 'CI / a-old', created_at: '2025-01-01T09:30:00Z', head_branch: 'main' },
+      ],
+      'repo-b': [
+        { id: 9003, name: 'CI', display_title: 'CI / b-old', created_at: '2025-01-01T09:00:00Z', head_branch: 'feature-x' },
+      ],
+    })
+
+    const { container } = renderBoard()
+
+    await waitFor(() => expect(screen.getByText('CI / a-new')).toBeInTheDocument())
+
+    const queueTitles = () =>
+      Array.from(container.querySelectorAll('.queue-row')).map((row) => row.textContent ?? '')
+
+    // 默认「等待时长（最久优先）」：repo-b（09:00 最早触发）在最前
+    expect(queueTitles()[0]).toContain('CI / b-old')
+    expect(queueTitles()[1]).toContain('CI / a-old')
+    expect(queueTitles()[2]).toContain('CI / a-new')
+
+    // 切换排序不应触发任何网络请求（纯本地重排）
+    const fetchCount = () => fetchMock.mock.calls.length
+    const countBefore = fetchCount()
+
+    // 切换到「仓库名」：repo-a 的两条排到 repo-b 前，且同仓库保持原相对顺序（稳定）
+    fireEvent.change(screen.getByLabelText('队列排序方式'), { target: { value: 'repo' } })
+    expect(queueTitles()[0]).toContain('CI / a-old')
+    expect(queueTitles()[1]).toContain('CI / a-new')
+    expect(queueTitles()[2]).toContain('CI / b-old')
+    expect(fetchCount()).toBe(countBefore)
+
+    // 切换到「触发时间（最新优先）」：最新触发的排最前
+    fireEvent.change(screen.getByLabelText('队列排序方式'), { target: { value: 'created' } })
+    expect(queueTitles()[0]).toContain('CI / a-new')
+    expect(queueTitles()[1]).toContain('CI / a-old')
+    expect(queueTitles()[2]).toContain('CI / b-old')
+    expect(fetchCount()).toBe(countBefore)
+  })
 })

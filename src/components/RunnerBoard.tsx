@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { GithubClient, isRateLimitedError } from '../github/client'
 import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RecentWorkflowRun, RunnerJobInfo } from '../github/data'
+import type { QueueSortMode } from '../domain/runners'
 import {
   attachCurrentJobs,
   branchCheckKey,
@@ -18,6 +19,7 @@ import {
   runnerStats,
   selectReposForScan,
   sortQueuedRuns,
+  sortQueuedRunsBy,
   uniqueBranchCheckKeys,
   waitMsOf,
   waitRatioOf,
@@ -177,6 +179,8 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const [recentNonSuccessOnly, setRecentNonSuccessOnly] = useState(false)
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(DEFAULT_AUTO_REFRESH_SECONDS)
   const [filterQuery, setFilterQuery] = useState('')
+  /** 排队队列的本地排序方式（默认按等待时长，最久优先） */
+  const [queueSort, setQueueSort] = useState<QueueSortMode>('wait')
   const [now, setNow] = useState(() => Date.now())
 
   const scanEpochRef = useRef(0)
@@ -424,6 +428,8 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const loadTier = stats.loadRatio < 0.5 ? 'low' : stats.loadRatio < 0.8 ? 'mid' : 'high'
 
   const filteredRuns = queuedRuns
+  // 展示顺序按用户选择的本地排序方式重排；最长等待与等待条仍按等待时长计算，与排序无关
+  const sortedRuns = sortQueuedRunsBy(filteredRuns, queueSort)
   const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentNonSuccessOnly).filter((run) =>
     matchesRecentRunFilter(run, filterQuery),
   )
@@ -652,7 +658,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
           <section className="board-panel queue-panel">
             <div className="section-title">
               <h2>⏳ 排队等待的 workflow</h2>
-              <p>按等待时长排序，等待条相对最长等待绘制；点击条目打开 GitHub 上的运行详情。</p>
+              <p>可按等待时长 / 触发时间 / 仓库 / 分支本地重排，无需重新连接；等待条相对最长等待绘制。</p>
             </div>
 
             <div className="toolbar">
@@ -687,6 +693,19 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                   </div>
                 )}
               </div>
+              <div className="toolbar-side">
+                <select
+                  className="queue-sort-select"
+                  aria-label="队列排序方式"
+                  value={queueSort}
+                  onChange={(event) => setQueueSort(event.target.value as QueueSortMode)}
+                >
+                  <option value="wait">等待时长（最久优先）</option>
+                  <option value="created">触发时间（最新优先）</option>
+                  <option value="repo">仓库名</option>
+                  <option value="branch">分支名</option>
+                </select>
+              </div>
             </div>
 
             {skippedRepos > 0 && (
@@ -719,7 +738,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
               </div>
             ) : (
               <ol className="queue-list">
-                {filteredRuns.map((run, index) => {
+                {sortedRuns.map((run, index) => {
                   const waitMs = waitMsOf(run, now)
                   const tier = waitTierOf(waitMs)
                   const ratio = waitRatioOf(run, now, longestWait)

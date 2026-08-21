@@ -20,6 +20,7 @@ import {
   runnerStats,
   selectReposForScan,
   sortQueuedRuns,
+  sortQueuedRunsBy,
   uniqueBranchCheckKeys,
   waitMsOf,
   waitRatioOf,
@@ -183,6 +184,46 @@ describe('sortQueuedRuns', () => {
     const runs = [makeRun({ id: 1 })]
     sortQueuedRuns(runs)
     expect(runs).toHaveLength(1)
+  })
+})
+
+describe('sortQueuedRunsBy', () => {
+  const runs = [
+    makeRun({ id: 1, repoName: 'repo-b', headBranch: 'feature-x', createdAt: '2025-01-01T10:00:00Z' }),
+    makeRun({ id: 2, repoName: 'repo-a', headBranch: 'main', createdAt: '2025-01-01T09:00:00Z' }),
+    makeRun({ id: 3, repoName: 'repo-c', headBranch: '', createdAt: '2025-01-01T09:30:00Z' }),
+  ]
+
+  it('wait：createdAt 升序，等待最久优先（默认行为）', () => {
+    expect(sortQueuedRunsBy(runs, 'wait').map((r) => r.id)).toEqual([2, 3, 1])
+  })
+
+  it('created：createdAt 降序，最新触发优先', () => {
+    expect(sortQueuedRunsBy(runs, 'created').map((r) => r.id)).toEqual([1, 3, 2])
+  })
+
+  it('repo：仓库名 A→Z（localeCompare）', () => {
+    expect(sortQueuedRunsBy(runs, 'repo').map((r) => r.id)).toEqual([2, 1, 3])
+  })
+
+  it('branch：分支名 A→Z，空分支排最前', () => {
+    expect(sortQueuedRunsBy(runs, 'branch').map((r) => r.id)).toEqual([3, 1, 2])
+  })
+
+  it('同 key 保持稳定排序（原相对顺序不变）', () => {
+    const stableRuns = [
+      makeRun({ id: 1, repoName: 'repo-a', headBranch: 'main', createdAt: '2025-01-01T10:00:00Z' }),
+      makeRun({ id: 2, repoName: 'repo-a', headBranch: 'main', createdAt: '2025-01-01T09:00:00Z' }),
+      makeRun({ id: 3, repoName: 'repo-a', headBranch: 'main', createdAt: '2025-01-01T11:00:00Z' }),
+    ]
+    expect(sortQueuedRunsBy(stableRuns, 'repo').map((r) => r.id)).toEqual([1, 2, 3])
+    expect(sortQueuedRunsBy(stableRuns, 'branch').map((r) => r.id)).toEqual([1, 2, 3])
+  })
+
+  it('不修改原数组', () => {
+    const copy = [...runs]
+    sortQueuedRunsBy(runs, 'repo')
+    expect(runs).toEqual(copy)
   })
 })
 

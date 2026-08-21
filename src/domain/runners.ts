@@ -128,6 +128,40 @@ export function sortQueuedRuns(runs: QueuedWorkflowRun[]): QueuedWorkflowRun[] {
   )
 }
 
+/**
+ * 排队 run 的本地排序方式：仅对当前已加载的数据重排，不发起任何网络请求。
+ * - wait：等待时长最久优先（createdAt 升序），默认值，与 sortQueuedRuns 行为一致
+ * - created：触发时间最新优先（createdAt 降序）
+ * - repo：仓库名 A→Z（localeCompare）
+ * - branch：分支名 A→Z（localeCompare；headBranch 为空串时视为最小、排最前）
+ *
+ * 稳定性说明：ES2019 起 Array.prototype.sort 规范要求稳定排序，
+ * V8 等现代 JS 引擎均已满足，同 key 元素保持原相对顺序。
+ */
+export type QueueSortMode = 'wait' | 'created' | 'repo' | 'branch'
+
+export function sortQueuedRunsBy(
+  runs: QueuedWorkflowRun[],
+  mode: QueueSortMode,
+): QueuedWorkflowRun[] {
+  switch (mode) {
+    case 'created':
+      return [...runs].sort(
+        (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt),
+      )
+    case 'repo':
+      return [...runs].sort((left, right) => left.repoName.localeCompare(right.repoName))
+    case 'branch':
+      return [...runs].sort((left, right) =>
+        (left.headBranch || '').localeCompare(right.headBranch || ''),
+      )
+    case 'wait':
+    default:
+      // 默认值：复用现有 sortQueuedRuns，保证默认视图行为不变
+      return sortQueuedRuns(runs)
+  }
+}
+
 export function waitMsOf(run: QueuedWorkflowRun, now: number): number {
   const timestamp = Date.parse(run.createdAt)
   if (Number.isNaN(timestamp)) {
