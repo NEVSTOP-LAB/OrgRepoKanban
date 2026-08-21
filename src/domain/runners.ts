@@ -218,6 +218,15 @@ export function matchesRunFilter(run: QueuedWorkflowRun, query: string): boolean
   )
 }
 
+export function matchesRecentRunFilter(run: RecentWorkflowRun, query: string): boolean {
+  return (
+    fuzzyIncludes(run.repoName, query) ||
+    fuzzyIncludes(run.workflowName, query) ||
+    fuzzyIncludes(run.displayTitle, query) ||
+    fuzzyIncludes(run.headBranch, query)
+  )
+}
+
 export function dedupeLatestWorkflowRuns(runs: RecentWorkflowRun[]): RecentWorkflowRun[] {
   const latestByKey = new Map<string, RecentWorkflowRun>()
 

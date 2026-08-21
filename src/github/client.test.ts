@@ -400,6 +400,63 @@ describe('GithubClient', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('excludes runs whose workflow no longer exists', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          total_count: 1,
+          workflows: [{ id: 101, name: 'Current' }],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          total_count: 2,
+          workflow_runs: [
+            {
+              id: 1,
+              workflow_id: 101,
+              name: 'Current',
+              run_number: 1,
+              event: 'push',
+              head_branch: 'main',
+              head_sha: 'abc',
+              html_url: 'https://example.com/run/1',
+              created_at: '2025-01-01T10:00:00Z',
+              updated_at: '2025-01-01T10:05:00Z',
+              status: 'completed',
+              conclusion: 'success',
+            },
+            {
+              id: 2,
+              workflow_id: 999,
+              name: 'Deleted',
+              run_number: 2,
+              event: 'push',
+              head_branch: 'main',
+              head_sha: 'def',
+              html_url: 'https://example.com/run/2',
+              created_at: '2025-01-01T11:00:00Z',
+              updated_at: '2025-01-01T11:05:00Z',
+              status: 'completed',
+              conclusion: 'failure',
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+
+    const client = new GithubClient('token-value', 'acme')
+    const runs = await client.listRecentWorkflowRuns('repo-a', Number.MAX_SAFE_INTEGER)
+
+    expect(runs?.map((run) => run.id)).toEqual([1])
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/repos/acme/repo-a/actions/workflows')
+  })
+
   it('returns null for unreadable repos in busy runner jobs', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ message: 'unavailable' }), {

@@ -65,6 +65,7 @@ interface UserRepoPermissionResponse {
 
 interface WorkflowRunResponse {
   id: number
+  workflow_id?: number
   name: string
   display_title?: string
   run_number: number
@@ -78,6 +79,10 @@ interface WorkflowRunResponse {
   status?: string
   conclusion?: string | null
   actor?: { login?: string } | null
+}
+
+interface WorkflowResponse {
+  id: number
 }
 
 interface WorkflowRunJobResponse {
@@ -351,6 +356,21 @@ export class GithubClient {
     try {
       const cutoff = Date.now() - cutoffMs
       const allRuns: RecentWorkflowRun[] = []
+      const workflowIds = new Set<number>()
+      let workflowNext: string | null =
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/workflows?per_page=100`
+
+      while (workflowNext) {
+        const response = await this.rawRequest(workflowNext)
+        const payload = (await this.parseJson(response)) as {
+          workflows?: WorkflowResponse[]
+        } | null
+        for (const workflow of payload?.workflows ?? []) {
+          workflowIds.add(workflow.id)
+        }
+        workflowNext = this.extractNextUrl(response.headers.get('link'))
+      }
+
       let next: string | null = `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/actions/runs?per_page=100`
 
       while (next) {
@@ -361,6 +381,10 @@ export class GithubClient {
 
         let pageHasRunsBeforeCutoff = false
         for (const run of payload?.workflow_runs ?? []) {
+          if (run.workflow_id === undefined || !workflowIds.has(run.workflow_id)) {
+            continue
+          }
+
           const startedAt = run.run_started_at ?? run.created_at
           const status = run.status ?? 'completed'
           const completedAt = status === 'completed' ? (run.updated_at ?? run.created_at) : null
@@ -373,6 +397,7 @@ export class GithubClient {
           allRuns.push({
             id: run.id,
             repoName,
+            workflowId: run.workflow_id,
             workflowName: run.name,
             displayTitle: run.display_title ?? run.name,
             runNumber: run.run_number,
