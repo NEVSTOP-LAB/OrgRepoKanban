@@ -70,6 +70,9 @@ function queuedRunResponse(repoName: string, runs: Array<Record<string, unknown>
   }
 }
 
+const RECENT_RUN_STARTED_AT = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+const RECENT_RUN_UPDATED_AT = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
 function stubConnectedApi(
   queuedByRepo: Record<string, Array<Record<string, unknown>>> = {},
   recentByRepo: Record<string, Array<Record<string, unknown>>> = {},
@@ -89,7 +92,7 @@ function stubConnectedApi(
       return jsonResponse({ total_count: 0, jobs: [] })
     }
     if (url.includes('/actions/workflows')) {
-      return jsonResponse({ total_count: 0, workflows: [] })
+      return jsonResponse({ total_count: 1, workflows: [{ id: 101 }] })
     }
     if (url.includes('/actions/runs?per_page=100')) {
       const repoName = REPOS.find((repo) => url.includes(`/repos/acme/${repo.name}/`))?.name
@@ -238,6 +241,112 @@ describe('RunnerBoard', () => {
     const link = await screen.findByRole('link', { name: /CI \/ deploy/ })
     expect(link).toHaveAttribute('href', 'https://github.com/acme/repo-a/actions/runs/8001')
     expect(link).toHaveAttribute('target', '_blank')
+  })
+
+  it('filters Copilot review and code agent runners from the board', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/actions/runners')) {
+        return jsonResponse({
+          total_count: 4,
+          runners: [
+            ...RUNNERS.runners,
+            {
+              id: 13,
+              name: 'copilot-review-runner',
+              os: 'linux',
+              status: 'online',
+              busy: true,
+              labels: [],
+            },
+            {
+              id: 14,
+              name: 'managed-runner',
+              os: 'linux',
+              status: 'online',
+              busy: false,
+              labels: [{ id: 3, name: 'Code Agent' }],
+            },
+          ],
+        })
+      }
+      if (url.includes('/orgs/acme/repos')) {
+        return jsonResponse(REPOS)
+      }
+      if (url.includes('/actions/runs?status=queued')) {
+        return jsonResponse(queuedRunResponse('repo-a', []))
+      }
+      if (url.includes('/actions/runs?status=in_progress')) {
+        return jsonResponse({ total_count: 0, workflow_runs: [] })
+      }
+      if (url.includes('/jobs')) {
+        return jsonResponse({ total_count: 0, jobs: [] })
+      }
+      if (url.includes('/actions/workflows')) {
+        return jsonResponse({ total_count: 0, workflows: [] })
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByText('linux-1')).toBeInTheDocument())
+    expect(screen.queryByText('copilot-review-runner')).not.toBeInTheDocument()
+    expect(screen.queryByText('managed-runner')).not.toBeInTheDocument()
+    expect(screen.getByText('Runner 总数')).toBeInTheDocument()
+    expect(screen.getByText('2')).toBeInTheDocument()
+  })
+
+  it('shows repository and workflow names on recent run cards', async () => {
+    stubConnectedApi({}, {
+      'repo-a': [{
+        id: 9101,
+        workflow_id: 101,
+        name: 'Deploy',
+        display_title: 'Deploy production',
+        run_number: 8,
+        event: 'push',
+        head_branch: 'main',
+        html_url: 'https://github.com/acme/repo-a/actions/runs/9101',
+        run_started_at: RECENT_RUN_STARTED_AT,
+        created_at: RECENT_RUN_STARTED_AT,
+        updated_at: RECENT_RUN_UPDATED_AT,
+        status: 'completed',
+        conclusion: 'success',
+        actor: { login: 'alice' },
+      }],
+    })
+
+    renderBoard()
+
+    expect(await screen.findByText('repo-a')).toBeInTheDocument()
+    expect(screen.getByText('Deploy')).toBeInTheDocument()
+    expect(screen.getByText('Deploy production')).toBeInTheDocument()
+  })
+
+  it('shows running workflow status instead of failure', async () => {
+    stubConnectedApi({}, {
+      'repo-a': [{
+        id: 9102,
+        workflow_id: 101,
+        name: 'Review',
+        display_title: 'Review pull request',
+        run_number: 9,
+        event: 'pull_request',
+        head_branch: 'main',
+        html_url: 'https://github.com/acme/repo-a/actions/runs/9102',
+        run_started_at: RECENT_RUN_STARTED_AT,
+        created_at: RECENT_RUN_STARTED_AT,
+        status: 'in_progress',
+        conclusion: null,
+        actor: { login: 'alice' },
+      }],
+    })
+
+    renderBoard()
+
+    expect(await screen.findByText('运行中')).toBeInTheDocument()
+    expect(screen.queryByText('失败')).not.toBeInTheDocument()
   })
 
   it('defaults auto refresh to 3 minutes with 30s/1min/3min/5min options', async () => {

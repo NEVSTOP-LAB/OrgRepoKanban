@@ -10,6 +10,7 @@ import {
   formatWaitDuration,
   fuzzyIncludes,
   isRecentlyPushed,
+  isCopilotRunner,
   longestWaitMs,
   matchesRecentRunFilter,
   matchesRunFilter,
@@ -335,6 +336,29 @@ describe('recent workflow run helpers', () => {
     expect(dedupeLatestWorkflowRuns(runs).map((run) => run.id)).toEqual([2, 3])
   })
 
+  it('完成结果会替换同一 workflow 的运行中记录', () => {
+    const running = {
+      id: 1,
+      repoName: 'repo-a',
+      workflowName: 'CI',
+      displayTitle: 'CI',
+      runNumber: 11,
+      event: 'push',
+      headBranch: 'main',
+      htmlUrl: 'https://example.com/run/1',
+      startedAt: '2025-01-01T10:00:00Z',
+      completedAt: null,
+      createdAt: '2025-01-01T10:00:00Z',
+      actor: 'alice',
+      status: 'in_progress',
+      conclusion: null,
+      success: false,
+    }
+    const completed = { ...running, id: 2, runNumber: 12, completedAt: '2025-01-01T10:05:00Z', status: 'completed', conclusion: 'success', success: true }
+
+    expect(dedupeLatestWorkflowRuns([running, completed]).map((run) => run.id)).toEqual([2])
+  })
+
   it('过滤成功运行时仅保留 success=true 的卡片', () => {
     const runs = [
       {
@@ -429,5 +453,13 @@ describe('eventLabel / osIcon', () => {
     expect(osIcon('Windows')).toBe('🪟')
     expect(osIcon('macOS')).toBe('🍎')
     expect(osIcon('weird-os')).toBe('💻')
+  })
+})
+
+describe('isCopilotRunner', () => {
+  it('识别 Copilot review 与 code agent runner', () => {
+    expect(isCopilotRunner(makeRunner({ name: 'copilot-review-runner' }))).toBe(true)
+    expect(isCopilotRunner(makeRunner({ labels: [{ id: 2, name: 'Code Agent' }] }))).toBe(true)
+    expect(isCopilotRunner(makeRunner({ name: 'linux-build-1', labels: [{ id: 2, name: 'docker' }] }))).toBe(false)
   })
 })

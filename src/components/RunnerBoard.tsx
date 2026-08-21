@@ -9,6 +9,7 @@ import {
   eventLabel,
   filterRecentRunsByStatus,
   formatWaitDuration,
+  isCopilotRunner,
   longestWaitMs,
   matchesRecentRunFilter,
   mergeRecentRuns,
@@ -96,7 +97,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     repoList: GithubRepo[],
     epoch: number,
     runnerNames: ReadonlySet<string>,
-  ) => {
+  ): Promise<ReadonlySet<string>> => {
     const targets = selectReposForScan(repoList, Date.now(), recentOnlyRef.current)
     const collected: QueuedWorkflowRun[] = []
     const busyJobs: RunnerJobInfo[] = []
@@ -150,14 +151,26 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
       // 把匹配到的「进行中 job」挂到对应忙碌 runner 上，用于显示当前 workflow 链接
       setRunners((prev) => attachCurrentJobs(prev, busyJobs))
     }
+
+    return new Set([
+      ...collected.map((run) => run.repoName),
+      ...busyJobs.map((job) => job.repoName),
+    ])
   }, [])
 
-  const refreshRecentRuns = useCallback(async (activeClient: GithubClient, repoList: GithubRepo[]) => {
+  const refreshRecentRuns = useCallback(async (
+    activeClient: GithubClient,
+    repoList: GithubRepo[],
+    repoNames?: ReadonlySet<string>,
+  ) => {
     const targets = selectReposForScan(repoList, Date.now(), recentOnlyRef.current)
+      .filter((repo) => repoNames === undefined || repoNames.has(repo.name))
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
     let completed = 0
 
-    setRecentRuns([])
+    if (repoNames === undefined) {
+      setRecentRuns([])
+    }
     setRecentProgress({ completed: 0, total: targets.length })
 
     for (const repo of targets) {
@@ -165,7 +178,10 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
         const runs = await activeClient.listRecentWorkflowRuns(repo.name)
         if (runs) {
           setRecentRuns((prev) =>
-            mergeRecentRuns(prev, dedupeLatestWorkflowRuns(runs)).filter((run) => {
+            mergeRecentRuns(
+              repoNames === undefined ? prev : prev.filter((run) => run.repoName !== repo.name),
+              dedupeLatestWorkflowRuns(runs),
+            ).filter((run) => {
               const timestamp = Date.parse(run.completedAt ?? run.startedAt)
               return Number.isNaN(timestamp) || timestamp >= cutoff
             }),
@@ -215,18 +231,18 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
         setRunners([])
         setRunnersUnavailable(true)
       } else {
-        setRunners(runnerList)
+        setRunners(runnerList.filter((runner) => !isCopilotRunner(runner)))
         setRunnersUnavailable(false)
       }
 
       // runner 名集合用于匹配「进行中 job」；列表不可读时为空集合，跳过 busy job 扫描
-      await scanQueued(
+      const queuedRepoNames = await scanQueued(
         activeClient,
         repoList,
         epoch,
-        new Set((runnerList ?? []).map((runner) => runner.name)),
+        new Set((runnerList ?? []).filter((runner) => !isCopilotRunner(runner)).map((runner) => runner.name)),
       )
-      await refreshRecentRuns(activeClient, repoList)
+      await refreshRecentRuns(activeClient, repoList, announce ? undefined : queuedRepoNames)
 
       if (announce && epoch === scanEpochRef.current) {
         setNotice({
@@ -679,7 +695,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                 {filteredRecentRuns.map((run) => (
                   <a
                     key={`${run.repoName}:${run.workflowName}:${run.id}`}
-                    className={`recent-card ${run.success ? 'is-success' : 'is-failure'}`}
+                    className={`recent-card ${run.status !== 'completed' ? 'is-running' : run.success ? 'is-success' : 'is-failure'}`}
                     href={run.htmlUrl}
                     target="_blank"
                     rel="noreferrer"
@@ -687,15 +703,18 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                   >
                     <div className="recent-card-topline">
                       <span className="recent-status-badge">
-                        {run.success ? '成功' : '失败'}
+                        {run.status !== 'completed' ? '运行中' : run.success ? '成功' : '失败'}
                       </span>
                       <span className="recent-time">
                         {new Date(run.completedAt ?? run.startedAt).toLocaleDateString('zh-CN')}
                       </span>
                     </div>
-                    <strong className="recent-card-title">{run.displayTitle || run.workflowName}</strong>
+                    <span className="recent-card-repo">{run.repoName}</span>
+                    <strong className="recent-card-title">{run.workflowName}</strong>
+                    {run.displayTitle && run.displayTitle !== run.workflowName && (
+                      <span className="recent-card-display-title">{run.displayTitle}</span>
+                    )}
                     <div className="recent-card-meta">
-                      <span className="recent-repo-name">{run.repoName}</span>
                       <span>#{run.runNumber}</span>
                     </div>
                     <div className="recent-card-footer">
