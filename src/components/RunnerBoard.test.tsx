@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GithubClient } from '../github/client'
@@ -347,6 +347,67 @@ describe('RunnerBoard', () => {
 
     expect(await screen.findByText('运行中')).toBeInTheDocument()
     expect(screen.queryByText('失败')).not.toBeInTheDocument()
+  })
+
+  it('updates running workflow status after it completes on next refresh', async () => {
+    let recentRunsCallCount = 0
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/actions/runners')) {
+        return jsonResponse(RUNNERS)
+      }
+      if (url.includes('/orgs/acme/repos')) {
+        return jsonResponse(REPOS)
+      }
+      if (url.includes('/actions/runs?status=queued')) {
+        return jsonResponse(queuedRunResponse('repo-a', []))
+      }
+      if (url.includes('/actions/runs?status=in_progress')) {
+        return jsonResponse({ total_count: 0, workflow_runs: [] })
+      }
+      if (url.includes('/jobs')) {
+        return jsonResponse({ total_count: 0, jobs: [] })
+      }
+      if (url.includes('/actions/workflows')) {
+        return jsonResponse({ total_count: 1, workflows: [{ id: 101 }] })
+      }
+      if (url.includes('/repos/acme/repo-a/actions/runs?per_page=100')) {
+        recentRunsCallCount += 1
+        return jsonResponse({
+          total_count: 1,
+          workflow_runs: [
+            {
+              id: 9103,
+              workflow_id: 101,
+              name: 'Deploy',
+              display_title: 'Deploy production',
+              run_number: 10,
+              event: 'push',
+              head_branch: 'main',
+              html_url: 'https://github.com/acme/repo-a/actions/runs/9103',
+              run_started_at: RECENT_RUN_STARTED_AT,
+              created_at: RECENT_RUN_STARTED_AT,
+              updated_at: RECENT_RUN_UPDATED_AT,
+              status: recentRunsCallCount === 1 ? 'in_progress' : 'completed',
+              conclusion: recentRunsCallCount === 1 ? null : 'success',
+              actor: { login: 'alice' },
+            },
+          ],
+        })
+      }
+      if (url.includes('/repos/acme/repo-b/actions/runs?per_page=100')) {
+        return jsonResponse({ total_count: 0, workflow_runs: [] })
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+
+    renderBoard()
+
+    expect(await screen.findByText('运行中')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await waitFor(() => expect(screen.getByText('成功')).toBeInTheDocument())
+    expect(screen.queryByText('运行中')).not.toBeInTheDocument()
+    expect(recentRunsCallCount).toBeGreaterThanOrEqual(2)
   })
 
   it('defaults auto refresh to 3 minutes with 30s/1min/3min/5min options', async () => {
