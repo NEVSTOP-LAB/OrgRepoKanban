@@ -4,6 +4,7 @@ import { GithubClient, isRateLimitedError } from '../github/client'
 import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RecentWorkflowRun, RunnerJobInfo } from '../github/data'
 import {
   attachCurrentJobs,
+  branchCheckKey,
   classifyRunners,
   dedupeLatestWorkflowRuns,
   eventLabel,
@@ -17,6 +18,7 @@ import {
   runnerStats,
   selectReposForScan,
   sortQueuedRuns,
+  uniqueBranchCheckKeys,
   waitMsOf,
   waitRatioOf,
   waitTierOf,
@@ -48,6 +50,51 @@ const DEFAULT_AUTO_REFRESH_SECONDS = 180
 
 const MAX_RUNNER_LABELS = 4
 
+/** 分支存在性检查的并发上限：避免对分支接口发起过多并发请求触发限流 */
+const BRANCH_CHECK_CONCURRENCY = 4
+
+/**
+ * 过滤掉「分支已被合并/删除」的僵尸排队 run（它们永远无法被 runner 执行）：
+ * 按 (repo, branch) 去重 → 并发（上限 BRANCH_CHECK_CONCURRENCY）检查分支存在性 →
+ * 不存在的隐藏并计入隐藏数；存在 / 检查失败（限流、网络、权限）/ 空分支的 run 保留（fail-open，避免误隐藏）。
+ */
+async function filterStaleQueuedRuns(
+  activeClient: GithubClient,
+  runs: QueuedWorkflowRun[],
+): Promise<{ visible: QueuedWorkflowRun[]; hiddenCount: number }> {
+  if (runs.length === 0) {
+    return { visible: runs, hiddenCount: 0 }
+  }
+
+  const keys = uniqueBranchCheckKeys(runs)
+  const existingKeys = new Set<string>()
+  const queue = [...keys]
+
+  const worker = async () => {
+    while (queue.length > 0) {
+      const item = queue.shift()!
+      try {
+        const exists = await activeClient.branchExists(item.repoName, item.branch)
+        if (exists) {
+          existingKeys.add(item.key)
+        }
+      } catch {
+        // fail-open：检查失败时保留该 run，避免限流/权限问题导致误隐藏
+        existingKeys.add(item.key)
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(BRANCH_CHECK_CONCURRENCY, keys.length) }, () => worker()),
+  )
+
+  const visible = runs.filter(
+    (run) => !run.headBranch || existingKeys.has(branchCheckKey(run.repoName, run.headBranch)),
+  )
+  return { visible, hiddenCount: runs.length - visible.length }
+}
+
 function formatError(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) {
     return error.message
@@ -78,6 +125,8 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const [scanProgress, setScanProgress] = useState<{ completed: number; total: number } | null>(null)
   const [skippedRepos, setSkippedRepos] = useState(0)
   const [scanFailures, setScanFailures] = useState(0)
+  /** 被隐藏的「分支已合并/删除」僵尸排队 run 数量 */
+  const [hiddenStaleRuns, setHiddenStaleRuns] = useState(0)
 
   // 视图选项
   const [recentOnly, setRecentOnly] = useState(true)
@@ -108,6 +157,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     const busyJobs: RunnerJobInfo[] = []
     let skipped = 0
     let failed = 0
+    let hiddenStale = 0
     let completed = 0
     const queue = [...targets]
     const CONCURRENCY = 8
@@ -115,6 +165,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     setScanProgress({ completed: 0, total: targets.length })
     setSkippedRepos(0)
     setScanFailures(0)
+    setHiddenStaleRuns(0)
     // 开始新一轮扫描前先清空旧队列：targets 为空时也不残留上一轮结果
     setQueuedRuns([])
 
@@ -130,7 +181,10 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
             // 仓库不可读（未启用 Actions / 无权限 / 不存在）
             skipped += 1
           } else {
-            collected.push(...queued)
+            // 先过滤「分支已被合并/删除」的僵尸排队 run，再计入收集结果
+            const { visible, hiddenCount } = await filterStaleQueuedRuns(activeClient, queued)
+            hiddenStale += hiddenCount
+            collected.push(...visible)
           }
           if (jobs !== null) {
             busyJobs.push(...jobs)
@@ -145,6 +199,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
           setQueuedRuns(sortQueuedRuns([...collected]))
           setSkippedRepos(skipped)
           setScanFailures(failed)
+          setHiddenStaleRuns(hiddenStale)
           setScanProgress({ completed, total: targets.length })
         }
       }
@@ -593,6 +648,12 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
             {scanFailures > 0 && (
               <div className="queue-skip-hint">
                 ⚠️ {scanFailures} 个仓库扫描失败（限流或网络问题），当前结果可能不完整。
+              </div>
+            )}
+
+            {hiddenStaleRuns > 0 && (
+              <div className="queue-skip-hint">
+                🗑️ 已隐藏 {hiddenStaleRuns} 个排队中的 workflow（对应分支已被合并或删除）
               </div>
             )}
 

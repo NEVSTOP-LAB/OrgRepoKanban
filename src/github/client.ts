@@ -442,6 +442,25 @@ export class GithubClient {
     }
   }
 
+  /**
+   * 检查仓库分支是否仍存在，用于识别「分支已被合并/删除」的僵尸排队 workflow run。
+   * 分支存在（200）→ true；分支不存在（404）→ false；其他状态码/网络错误继续抛出，
+   * 由调用方按 fail-open（放行显示）处理，避免限流或权限问题导致误隐藏。
+   */
+  async branchExists(repoName: string, branch: string): Promise<boolean> {
+    try {
+      await this.rawRequest(
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/branches/${encodeURIComponent(branch)}`,
+      )
+      return true
+    } catch (error) {
+      if ((error as HttpError).status === 404) {
+        return false
+      }
+      throw error
+    }
+  }
+
   async listBusyRunnerJobs(
     repoName: string,
     runnerNames: ReadonlySet<string>,

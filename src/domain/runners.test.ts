@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { OrgRunner, QueuedWorkflowRun } from '../github/data'
 import {
   attachCurrentJobs,
+  branchCheckKey,
   classifyRunners,
   dedupeLatestWorkflowRuns,
   eventLabel,
@@ -19,6 +20,7 @@ import {
   runnerStats,
   selectReposForScan,
   sortQueuedRuns,
+  uniqueBranchCheckKeys,
   waitMsOf,
   waitRatioOf,
   waitTierOf,
@@ -438,6 +440,35 @@ describe('recent workflow run helpers', () => {
     }]
 
     expect(mergeRecentRuns(current, incoming).map((run) => run.id)).toEqual([2])
+  })
+})
+
+describe('branchCheckKey / uniqueBranchCheckKeys', () => {
+  it('生成 (仓库, 分支) 去重键', () => {
+    expect(branchCheckKey('repo-a', 'feature-x')).toBe('repo-a::feature-x')
+    expect(branchCheckKey('repo-b', 'release/1.0')).toBe('repo-b::release/1.0')
+  })
+
+  it('按 (仓库, 分支) 去重并跳过空分支', () => {
+    const runs = [
+      makeRun({ id: 1, repoName: 'repo-a', headBranch: 'feature-x' }),
+      makeRun({ id: 2, repoName: 'repo-a', headBranch: 'feature-x' }),
+      makeRun({ id: 3, repoName: 'repo-b', headBranch: 'feature-x' }),
+      makeRun({ id: 4, repoName: 'repo-a', headBranch: '' }),
+    ]
+
+    const keys = uniqueBranchCheckKeys(runs)
+    expect(keys.map((key) => key.key)).toEqual([
+      'repo-a::feature-x',
+      'repo-b::feature-x',
+    ])
+    expect(keys[0]).toMatchObject({ repoName: 'repo-a', branch: 'feature-x' })
+  })
+
+  it('全部为空分支时返回空列表（无需检查）', () => {
+    expect(
+      uniqueBranchCheckKeys([makeRun({ id: 1, headBranch: '' }), makeRun({ id: 2, headBranch: '' })]),
+    ).toEqual([])
   })
 })
 

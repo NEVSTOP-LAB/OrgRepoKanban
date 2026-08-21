@@ -61,7 +61,7 @@ function queuedRunResponse(repoName: string, runs: Array<Record<string, unknown>
       display_title: run.display_title ?? 'CI / test',
       run_number: 12,
       event: 'push',
-      head_branch: 'main',
+      head_branch: run.head_branch ?? 'main',
       head_sha: 'deadbeef',
       html_url: `https://github.com/acme/${repoName}/actions/runs/9001`,
       created_at: run.created_at ?? '2025-01-01T10:00:00Z',
@@ -76,6 +76,7 @@ const RECENT_RUN_UPDATED_AT = new Date(Date.now() - 60 * 60 * 1000).toISOString(
 function stubConnectedApi(
   queuedByRepo: Record<string, Array<Record<string, unknown>>> = {},
   recentByRepo: Record<string, Array<Record<string, unknown>>> = {},
+  missingBranches: Array<{ repo: string; branch: string }> = [],
 ) {
   fetchMock.mockImplementation(async (input) => {
     const url = String(input)
@@ -87,6 +88,21 @@ function stubConnectedApi(
     }
     if (url.includes('/actions/runs?status=in_progress')) {
       return jsonResponse({ total_count: 0, workflow_runs: [] })
+    }
+    if (url.includes('/branches/')) {
+      // 分支存在性检查：默认 200（分支存在）；命中 missingBranches 的返回 404
+      const repoName = REPOS.find((repo) => url.includes(`/repos/acme/${repo.name}/branches/`))?.name
+      const branch = decodeURIComponent(url.split('/branches/')[1] ?? '')
+      const missing = missingBranches.some(
+        (item) => item.repo === repoName && item.branch === branch,
+      )
+      if (missing) {
+        return new Response(JSON.stringify({ message: 'Not Found' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return jsonResponse({ name: 'main', commit: {} })
     }
     if (url.includes('/jobs')) {
       return jsonResponse({ total_count: 0, jobs: [] })
@@ -148,6 +164,36 @@ describe('RunnerBoard', () => {
     await waitFor(() =>
       expect(screen.getByText('当前没有排队等待的 workflow。')).toBeInTheDocument(),
     )
+  })
+
+  it('hides queued runs whose branch was merged or deleted', async () => {
+    stubConnectedApi(
+      {
+        'repo-a': [{ id: 9001, name: 'CI', display_title: 'CI / test', head_branch: 'feature-x' }],
+      },
+      {},
+      [{ repo: 'repo-a', branch: 'feature-x' }],
+    )
+
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByText('linux-1')).toBeInTheDocument())
+    // 分支已删除的 run 不显示，并出现隐藏提示条
+    expect(screen.queryByText('CI / test')).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/已隐藏 1 个排队中的 workflow（对应分支已被合并或删除）/),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps queued runs whose branch still exists', async () => {
+    stubConnectedApi({
+      'repo-a': [{ id: 9001, name: 'CI', display_title: 'CI / test' }],
+    })
+
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByText('CI / test')).toBeInTheDocument())
+    expect(screen.queryByText(/已隐藏/)).not.toBeInTheDocument()
   })
 
   it('places the filter control in the recent-runs section', async () => {
