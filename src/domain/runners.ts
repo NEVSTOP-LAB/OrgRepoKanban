@@ -1,4 +1,10 @@
-import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RunnerJobInfo } from '../github/data'
+import type {
+  GithubRepo,
+  OrgRunner,
+  QueuedWorkflowRun,
+  RecentWorkflowRun,
+  RunnerJobInfo,
+} from '../github/data'
 
 
 // ── Runner 看板 ──────────────────────────────────────────────────────────
@@ -210,6 +216,45 @@ export function matchesRunFilter(run: QueuedWorkflowRun, query: string): boolean
     fuzzyIncludes(run.displayTitle, query) ||
     fuzzyIncludes(run.headBranch, query)
   )
+}
+
+export function dedupeLatestWorkflowRuns(runs: RecentWorkflowRun[]): RecentWorkflowRun[] {
+  const latestByKey = new Map<string, RecentWorkflowRun>()
+
+  for (const run of runs) {
+    const key = `${run.repoName}::${run.workflowName}`
+    const current = latestByKey.get(key)
+    const currentTime = Date.parse(current?.completedAt ?? current?.startedAt ?? current?.createdAt ?? '0')
+    const incomingTime = Date.parse(run.completedAt ?? run.startedAt ?? run.createdAt ?? '0')
+
+    if (!current || incomingTime > currentTime) {
+      latestByKey.set(key, run)
+    }
+  }
+
+  return [...latestByKey.values()].sort((left, right) => {
+    const leftTime = Date.parse(left.completedAt ?? left.startedAt ?? left.createdAt)
+    const rightTime = Date.parse(right.completedAt ?? right.startedAt ?? right.createdAt)
+    return rightTime - leftTime
+  })
+}
+
+export function filterRecentRunsByStatus(
+  runs: RecentWorkflowRun[],
+  successOnly: boolean,
+): RecentWorkflowRun[] {
+  if (!successOnly) {
+    return runs
+  }
+
+  return runs.filter((run) => run.success)
+}
+
+export function mergeRecentRuns(
+  current: RecentWorkflowRun[],
+  incoming: RecentWorkflowRun[],
+): RecentWorkflowRun[] {
+  return dedupeLatestWorkflowRuns([...current, ...incoming])
 }
 
 const EVENT_LABELS: Record<string, string> = {

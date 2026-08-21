@@ -110,6 +110,24 @@ export interface QueuedWorkflowRun {
   actor: string
 }
 
+export interface RecentWorkflowRun {
+  id: number
+  repoName: string
+  workflowName: string
+  displayTitle: string
+  runNumber: number
+  event: string
+  headBranch: string
+  htmlUrl: string
+  startedAt: string
+  completedAt?: string | null
+  createdAt: string
+  actor: string
+  status: string
+  conclusion: string | null
+  success: boolean
+}
+
 export interface RepoPermission {
   repoName: string
   permission: PermissionLevel
