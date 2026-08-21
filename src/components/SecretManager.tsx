@@ -648,7 +648,7 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
                       type="button"
                       className="search-clear"
                       aria-label="清空仓库过滤"
-                      onClick={() => setRepoFilter('')}
+onClick={() => { setSelectedRepos(new Set()); setRepoFilter('') }}
                     >
                       ×
                     </button>
