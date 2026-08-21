@@ -70,7 +70,8 @@ interface WorkflowRunResponse {
   display_title?: string
   run_number: number
   event: string
-  head_branch: string
+  /** GitHub API 对已删除/合并分支的 run 可能返回 null */
+  head_branch?: string | null
   head_sha: string
   html_url: string
   created_at: string
@@ -320,7 +321,7 @@ export class GithubClient {
             displayTitle: run.display_title ?? run.name,
             runNumber: run.run_number,
             event: run.event,
-            headBranch: run.head_branch,
+            headBranch: run.head_branch ?? '',
             headSha: run.head_sha,
             htmlUrl: run.html_url,
             createdAt: run.created_at,
@@ -410,7 +411,7 @@ export class GithubClient {
             displayTitle: run.display_title ?? run.name,
             runNumber: run.run_number,
             event: run.event,
-            headBranch: run.head_branch,
+            headBranch: run.head_branch ?? '',
             htmlUrl: run.html_url,
             startedAt,
             completedAt,
@@ -489,7 +490,7 @@ export class GithubClient {
             displayTitle: run.display_title ?? run.name,
             runNumber: run.run_number,
             event: run.event,
-            headBranch: run.head_branch,
+            headBranch: run.head_branch ?? '',
             headSha: run.head_sha,
             htmlUrl: run.html_url,
             createdAt: run.created_at,

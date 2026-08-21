@@ -50,17 +50,58 @@ const DEFAULT_AUTO_REFRESH_SECONDS = 180
 
 const MAX_RUNNER_LABELS = 4
 
-/** 分支存在性检查的并发上限：避免对分支接口发起过多并发请求触发限流 */
+/** 分支存在性检查：单次调用（单个仓库）内的并发 worker 数 */
 const BRANCH_CHECK_CONCURRENCY = 4
 
 /**
+ * 分支存在性检查的全局并发上限：scanQueued 有 8 个仓库级 worker，各自最多并行
+ * BRANCH_CHECK_CONCURRENCY 个检查，理论峰值可达 8×4=32；所有仓库共享同一个信号量，
+ * 把任意时刻全局部检查数收敛到该上限，避免对分支接口发起过多并发请求触发限流。
+ */
+const BRANCH_CHECK_GLOBAL_CONCURRENCY = 8
+
+/** 分支存在性检查的并发限制器：信号量，保证任意时刻并发检查数不超过 maxConcurrent */
+interface BranchCheckLimiter {
+  acquire: () => Promise<void>
+  release: () => void
+}
+
+/** 创建共享信号量：acquire 排队等待许可；release 把许可转交给队首等待者（若存在） */
+function createBranchCheckLimiter(maxConcurrent: number): BranchCheckLimiter {
+  let active = 0
+  const waiters: Array<() => void> = []
+  return {
+    acquire: () =>
+      new Promise<void>((resolve) => {
+        if (active < maxConcurrent) {
+          active += 1
+          resolve()
+        } else {
+          waiters.push(resolve)
+        }
+      }),
+    release: () => {
+      const next = waiters.shift()
+      if (next) {
+        // 许可转移给被唤醒的等待者，活跃计数保持不变
+        next()
+      } else {
+        active -= 1
+      }
+    },
+  }
+}
+
+/**
  * 过滤掉「分支已被合并/删除」的僵尸排队 run（它们永远无法被 runner 执行）：
- * 按 (repo, branch) 去重 → 并发（上限 BRANCH_CHECK_CONCURRENCY）检查分支存在性 →
+ * 按 (repo, branch) 去重 → 并发检查分支存在性（单仓库内 worker 数受 BRANCH_CHECK_CONCURRENCY 限制，
+ * 全局并发由调用方传入的共享 limiter 统一收敛）→
  * 不存在的隐藏并计入隐藏数；存在 / 检查失败（限流、网络、权限）/ 空分支的 run 保留（fail-open，避免误隐藏）。
  */
 async function filterStaleQueuedRuns(
   activeClient: GithubClient,
   runs: QueuedWorkflowRun[],
+  limiter: BranchCheckLimiter,
 ): Promise<{ visible: QueuedWorkflowRun[]; hiddenCount: number }> {
   if (runs.length === 0) {
     return { visible: runs, hiddenCount: 0 }
@@ -73,6 +114,7 @@ async function filterStaleQueuedRuns(
   const worker = async () => {
     while (queue.length > 0) {
       const item = queue.shift()!
+      await limiter.acquire()
       try {
         const exists = await activeClient.branchExists(item.repoName, item.branch)
         if (exists) {
@@ -81,6 +123,8 @@ async function filterStaleQueuedRuns(
       } catch {
         // fail-open：检查失败时保留该 run，避免限流/权限问题导致误隐藏
         existingKeys.add(item.key)
+      } finally {
+        limiter.release()
       }
     }
   }
@@ -161,6 +205,8 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     let completed = 0
     const queue = [...targets]
     const CONCURRENCY = 8
+    // 所有仓库共享的分支检查并发限制器：任意时刻全部分支检查数不超过全局上限
+    const branchCheckLimiter = createBranchCheckLimiter(BRANCH_CHECK_GLOBAL_CONCURRENCY)
 
     setScanProgress({ completed: 0, total: targets.length })
     setSkippedRepos(0)
@@ -182,7 +228,11 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
             skipped += 1
           } else {
             // 先过滤「分支已被合并/删除」的僵尸排队 run，再计入收集结果
-            const { visible, hiddenCount } = await filterStaleQueuedRuns(activeClient, queued)
+            const { visible, hiddenCount } = await filterStaleQueuedRuns(
+              activeClient,
+              queued,
+              branchCheckLimiter,
+            )
             hiddenStale += hiddenCount
             collected.push(...visible)
           }
