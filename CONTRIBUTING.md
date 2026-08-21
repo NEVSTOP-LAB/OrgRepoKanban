@@ -32,7 +32,7 @@ npm run build
 
 当前仓库包含以下验证方式：
 
-- `npm test`：运行 Vitest 测试（13 个测试文件，99 个测试用例）。
+- `npm test`：运行 Vitest 测试（14 个测试文件，125 个测试用例）。
 - `npm run build`：执行 TypeScript 构建与 Vite 生产打包。
 
 ## 项目结构
@@ -48,6 +48,7 @@ src/
 ├── components/
 │   ├── HomePage.tsx          # 首页：统一认证表单 + 导航卡片
 │   ├── SecretManager.tsx     # Secret 管理页
+│   ├── SecretManager.test.tsx # Secret 管理页组件测试
 │   ├── RunnerBoard.tsx       # Runner 看板页（runner 状态 + 排队队列）
 │   ├── RunnerBoard.test.tsx   # Runner 看板组件测试
 │   └── PermissionBoard.tsx   # 权限看板展示组件

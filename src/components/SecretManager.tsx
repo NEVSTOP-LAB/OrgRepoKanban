@@ -74,6 +74,9 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
   // Multi-select state for repo cards
   const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set())
 
+  // 私有仓库列表过滤关键字（按仓库名 / 已配置 Secret 名匹配）
+  const [repoFilter, setRepoFilter] = useState('')
+
   // Loading progress (total private repos to load)
   const [loadingTotal, setLoadingTotal] = useState(0)
 
@@ -103,6 +106,7 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
     setLoading(true)
     setRepoStates([])
     setSelectedRepos(new Set())
+    setRepoFilter('')
     clearNotice()
 
     try {
@@ -193,10 +197,10 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
   }
 
   const toggleAllRepos = () => {
-    if (selectedRepos.size === repoSummaries.length && repoSummaries.length > 0) {
+    if (selectedRepos.size === filteredRepoSummaries.length && filteredRepoSummaries.length > 0) {
       setSelectedRepos(new Set())
     } else {
-      setSelectedRepos(new Set(repoSummaries.map((r) => r.name)))
+      setSelectedRepos(new Set(filteredRepoSummaries.map((r) => r.name)))
     }
   }
 
@@ -229,9 +233,11 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
     }
 
     // If dropping onto a selected repo and multiple repos are selected, apply to all selected
+    // (restricted to repos currently visible under the filter, like the permission board)
+    const visibleRepoNames = new Set(filteredRepoSummaries.map((r) => r.name))
     const targetRepos =
       selectedRepos.has(repoName) && selectedRepos.size > 1
-        ? Array.from(selectedRepos)
+        ? Array.from(selectedRepos).filter((name) => visibleRepoNames.has(name))
         : [repoName]
 
     setPendingOps((prev) => {
@@ -263,9 +269,11 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
     }
 
     // If the dragged repo is selected and multiple repos are selected, apply to all selected
+    // (restricted to repos currently visible under the filter, like the permission board)
+    const visibleRepoNames = new Set(filteredRepoSummaries.map((r) => r.name))
     const targetRepos =
       selectedRepos.has(repoName) && selectedRepos.size > 1
-        ? Array.from(selectedRepos)
+        ? Array.from(selectedRepos).filter((name) => visibleRepoNames.has(name))
         : [repoName]
 
     setPendingOps((prev) => {
@@ -417,6 +425,18 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
       rs.repo.name,
     ),
   }))
+
+  // 按仓库名 / 已配置 Secret 名过滤私有仓库（大小写不敏感）
+  const normalizedFilter = repoFilter.trim().toLowerCase()
+  const filteredRepoSummaries = normalizedFilter
+    ? repoSummaries.filter(
+        (repo) =>
+          repo.name.toLowerCase().includes(normalizedFilter) ||
+          repo.configuredSecrets.some((s) =>
+            s.toLowerCase().includes(normalizedFilter),
+          ),
+      )
+    : repoSummaries
 
   // Prepare secret summaries for the left panel
   const secretSummaries: SecretSummary[] = orgSecrets.map((s) => ({
@@ -587,18 +607,48 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
               <span>
                 {loading && loadingTotal > 0
                   ? `${repoSummaries.length}/${loadingTotal}`
-                  : repoSummaries.length}
+                  : repoFilter.trim()
+                    ? `${filteredRepoSummaries.length}/${repoSummaries.length}`
+                    : repoSummaries.length}
               </span>
-              {!loading && repoSummaries.length > 0 ? (
+              {!loading && filteredRepoSummaries.length > 0 ? (
                 <button
                   type="button"
                   className="select-all-button"
                   onClick={toggleAllRepos}
                 >
-                  {selectedRepos.size === repoSummaries.length ? '取消全选' : '全选'}
+                  {selectedRepos.size === filteredRepoSummaries.length ? '取消全选' : '全选'}
                 </button>
               ) : null}
             </div>
+            {!loading ? (
+              <div className="secret-column-filter">
+                <div className="search-box">
+                  <input
+                    type="text"
+                    className="queue-filter-input"
+                    aria-label="过滤私有仓库"
+                    placeholder="过滤仓库名或 Secret…"
+                    value={repoFilter}
+                    onChange={(event) => {
+                      // 过滤变化时清空多选，避免批量应用到被过滤隐藏的仓库
+                      setSelectedRepos(new Set())
+                      setRepoFilter(event.target.value)
+                    }}
+                  />
+                  {repoFilter ? (
+                    <button
+                      type="button"
+                      className="search-clear"
+                      aria-label="清空仓库过滤"
+                      onClick={() => setRepoFilter('')}
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
             {selectedRepos.size > 0 ? (
               <div className="selected-repos-hint">
                 已选 {selectedRepos.size} 个仓库 · 拖拽 Secret 将批量应用
@@ -607,8 +657,10 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
             <div className="secret-column-body">
               {repoSummaries.length === 0 && !loading ? (
                 <div className="secret-empty">该组织暂无私有仓库</div>
+              ) : repoSummaries.length > 0 && filteredRepoSummaries.length === 0 ? (
+                <div className="secret-empty">没有匹配的仓库</div>
               ) : null}
-              {repoSummaries.map((repo) => (
+              {filteredRepoSummaries.map((repo) => (
                 <div
                   key={repo.name}
                   className={`repo-secret-card${dragOverRepo === repo.name ? ' drag-over' : ''}${selectedRepos.has(repo.name) ? ' selected' : ''}`}
