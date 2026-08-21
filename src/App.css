@@ -1570,7 +1570,7 @@
   color: var(--ink-muted);
 }
 
-.recent-success-toggle {
+.recent-non-success-toggle {
   display: inline-flex;
   align-items: center;
   gap: 8px;

@@ -174,7 +174,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
 
   // 视图选项
   const [recentOnly, setRecentOnly] = useState(true)
-  const [recentSuccessOnly, setRecentSuccessOnly] = useState(false)
+  const [recentNonSuccessOnly, setRecentNonSuccessOnly] = useState(false)
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(DEFAULT_AUTO_REFRESH_SECONDS)
   const [filterQuery, setFilterQuery] = useState('')
   const [now, setNow] = useState(() => Date.now())
@@ -424,7 +424,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const loadTier = stats.loadRatio < 0.5 ? 'low' : stats.loadRatio < 0.8 ? 'mid' : 'high'
 
   const filteredRuns = queuedRuns
-  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentSuccessOnly).filter((run) =>
+  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentNonSuccessOnly).filter((run) =>
     matchesRecentRunFilter(run, filterQuery),
   )
   const longestWait = longestWaitMs(filteredRuns, now)
@@ -792,13 +792,13 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                   </button>
                 )}
               </div>
-              <label className="recent-success-toggle">
+              <label className="recent-non-success-toggle">
                 <input
                   type="checkbox"
-                  checked={recentSuccessOnly}
-                  onChange={(event) => setRecentSuccessOnly(event.target.checked)}
+                  checked={recentNonSuccessOnly}
+                  onChange={(event) => setRecentNonSuccessOnly(event.target.checked)}
                 />
-                仅显示成功运行
+                只显示非成功运行
               </label>
               {recentProgress && (
                 <span className="recent-loading-status">

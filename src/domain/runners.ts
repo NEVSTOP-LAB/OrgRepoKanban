@@ -284,15 +284,20 @@ export function dedupeLatestWorkflowRuns(runs: RecentWorkflowRun[]): RecentWorkf
   })
 }
 
+/**
+ * 最近运行记录的状态过滤：nonSuccessOnly=true 时仅保留「非成功」记录
+ * （失败 / 已取消 / 超时等 success=false 的完成记录，以及运行中 success=false 的记录），
+ * 成功的 workflow 不需要关注，因此默认不勾选展示全部。
+ */
 export function filterRecentRunsByStatus(
   runs: RecentWorkflowRun[],
-  successOnly: boolean,
+  nonSuccessOnly: boolean,
 ): RecentWorkflowRun[] {
-  if (!successOnly) {
+  if (!nonSuccessOnly) {
     return runs
   }
 
-  return runs.filter((run) => run.success)
+  return runs.filter((run) => !run.success)
 }
 
 export function mergeRecentRuns(

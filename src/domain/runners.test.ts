@@ -361,7 +361,7 @@ describe('recent workflow run helpers', () => {
     expect(dedupeLatestWorkflowRuns([running, completed]).map((run) => run.id)).toEqual([2])
   })
 
-  it('过滤成功运行时仅保留 success=true 的卡片', () => {
+  it('只显示非成功时过滤掉 success=true 的记录，保留失败与运行中', () => {
     const runs = [
       {
         id: 1,
@@ -397,10 +397,29 @@ describe('recent workflow run helpers', () => {
         conclusion: 'failure',
         success: false,
       },
+      {
+        id: 3,
+        repoName: 'repo-c',
+        workflowName: 'Review',
+        displayTitle: 'Review',
+        runNumber: 3,
+        event: 'pull_request',
+        headBranch: 'feature-x',
+        htmlUrl: 'https://example.com/run/3',
+        startedAt: '2025-01-01T10:00:00Z',
+        completedAt: null,
+        createdAt: '2025-01-01T10:00:00Z',
+        actor: 'carol',
+        status: 'in_progress',
+        conclusion: null,
+        success: false,
+      },
     ]
 
-    expect(filterRecentRunsByStatus(runs, true).map((run) => run.id)).toEqual([1])
-    expect(filterRecentRunsByStatus(runs, false).map((run) => run.id)).toEqual([1, 2])
+    // 只显示非成功：成功记录被过滤，失败与运行中记录（success=false）保留
+    expect(filterRecentRunsByStatus(runs, true).map((run) => run.id)).toEqual([2, 3])
+    // nonSuccessOnly=false 时不过滤
+    expect(filterRecentRunsByStatus(runs, false).map((run) => run.id)).toEqual([1, 2, 3])
   })
 
   it('合并增量更新时保留最新记录并去重', () => {

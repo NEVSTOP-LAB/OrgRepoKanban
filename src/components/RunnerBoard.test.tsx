@@ -395,6 +395,58 @@ describe('RunnerBoard', () => {
     expect(screen.queryByText('失败')).not.toBeInTheDocument()
   })
 
+  it('勾选「只显示非成功运行」后隐藏成功记录并保留失败记录', async () => {
+    stubConnectedApi({}, {
+      'repo-a': [
+        {
+          id: 9201,
+          workflow_id: 101,
+          name: 'Deploy',
+          display_title: 'Deploy production',
+          run_number: 21,
+          event: 'push',
+          head_branch: 'main',
+          html_url: 'https://github.com/acme/repo-a/actions/runs/9201',
+          run_started_at: RECENT_RUN_STARTED_AT,
+          created_at: RECENT_RUN_STARTED_AT,
+          updated_at: RECENT_RUN_UPDATED_AT,
+          status: 'completed',
+          conclusion: 'success',
+          actor: { login: 'alice' },
+        },
+        {
+          id: 9202,
+          workflow_id: 101,
+          name: 'Nightly',
+          display_title: 'Nightly build',
+          run_number: 22,
+          event: 'schedule',
+          head_branch: 'main',
+          html_url: 'https://github.com/acme/repo-a/actions/runs/9202',
+          run_started_at: RECENT_RUN_STARTED_AT,
+          created_at: RECENT_RUN_STARTED_AT,
+          updated_at: RECENT_RUN_UPDATED_AT,
+          status: 'completed',
+          conclusion: 'failure',
+          actor: { login: 'alice' },
+        },
+      ],
+    })
+
+    renderBoard()
+
+    // checkbox 文案存在
+    expect(await screen.findByLabelText('只显示非成功运行')).toBeInTheDocument()
+    // 默认不勾选：成功与失败记录都展示
+    expect(screen.getByText('成功')).toBeInTheDocument()
+    expect(screen.getByText('失败')).toBeInTheDocument()
+
+    // 勾选后：成功记录隐藏，失败记录保留
+    fireEvent.click(screen.getByLabelText('只显示非成功运行'))
+    await waitFor(() => expect(screen.queryByText('成功')).not.toBeInTheDocument())
+    expect(screen.getByText('失败')).toBeInTheDocument()
+  })
+
   it('updates running workflow status after it completes on next refresh', async () => {
     let recentRunsCallCount = 0
     fetchMock.mockImplementation(async (input) => {
