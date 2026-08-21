@@ -301,30 +301,53 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
     setExecuting(true)
     setNotice({ tone: 'info', title: '正在执行 Secret 操作...' })
 
+    // 快照待执行列表；执行过程中每个操作完成后会从列表中动态移除
+    const ops = [...pendingOps]
     const succeededDescs: string[] = []
     const failed: Array<{ desc: string; error: string }> = []
-    const succeededIndices = new Set<number>()
+    const failedSecretNames = new Set<string>()
+    let completedCount = 0
+    const total = ops.length
 
-    for (let i = 0; i < pendingOps.length; i++) {
-      const op = pendingOps[i]
-      try {
-        if (op.action === 'set') {
-          await client.setRepoSecret(op.repoName, op.secretName, op.value)
-        } else {
-          await client.deleteRepoSecret(op.repoName, op.secretName)
+    // 与数据加载一致：使用有界并发的工作池异步执行，
+    // 每个操作成功后就立即从待执行列表中移除，列表实时缩减
+    const CONCURRENCY = 4
+    const queue = [...ops]
+
+    const worker = async () => {
+      while (queue.length > 0) {
+        const op = queue.shift()!
+        try {
+          if (op.action === 'set') {
+            await client.setRepoSecret(op.repoName, op.secretName, op.value)
+          } else {
+            await client.deleteRepoSecret(op.repoName, op.secretName)
+          }
+          succeededDescs.push(formatPendingOp(op))
+          // 动态移除本次已成功执行的操作
+          setPendingOps((prev) => prev.filter((p) => p !== op))
+        } catch (error) {
+          failed.push({
+            desc: formatPendingOp(op),
+            error: error instanceof Error ? error.message : '未知错误',
+          })
+          failedSecretNames.add(op.secretName)
         }
-        succeededDescs.push(formatPendingOp(op))
-        succeededIndices.add(i)
-      } catch (error) {
-        failed.push({
-          desc: formatPendingOp(op),
-          error: error instanceof Error ? error.message : '未知错误',
+        completedCount += 1
+        setNotice({
+          tone: 'info',
+          title: '正在执行 Secret 操作...',
+          description: `已完成 ${completedCount}/${total} 个操作。`,
         })
       }
     }
 
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, ops.length) }, () => worker()),
+    )
+
     // Refresh repo secrets for affected repos
-    const affectedRepos = new Set(pendingOps.map((op) => op.repoName))
+    const affectedRepos = new Set(ops.map((op) => op.repoName))
     for (const repoName of affectedRepos) {
       try {
         const repoSecrets = await client.listRepoSecrets(repoName)
@@ -338,39 +361,23 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
       }
     }
 
-    // Keep failed ops in the queue for retry; only remove succeeded ones
-    if (succeededIndices.size > 0) {
-      setPendingOps((prev) => prev.filter((_, i) => !succeededIndices.has(i)))
-    }
-
     // Only clear a secret's value when ALL set ops for that name succeeded
     // (if any op for secret X failed, keep the value so the user can retry)
-    if (succeededIndices.size > 0) {
-      // Collect secret names that had any failed op
-      const failedSecretNames = new Set<string>()
-      for (let i = 0; i < pendingOps.length; i++) {
-        if (!succeededIndices.has(i)) {
-          failedSecretNames.add(pendingOps[i].secretName)
-        }
+    const safeToClear = new Set<string>()
+    for (const op of ops) {
+      if (op.action === 'set' && !failedSecretNames.has(op.secretName)) {
+        safeToClear.add(op.secretName)
       }
+    }
 
-      const safeToClear = new Set<string>()
-      for (const i of succeededIndices) {
-        const op = pendingOps[i]
-        if (op.action === 'set' && !failedSecretNames.has(op.secretName)) {
-          safeToClear.add(op.secretName)
+    if (safeToClear.size > 0) {
+      setSecretValues((prev) => {
+        const next = { ...prev }
+        for (const name of safeToClear) {
+          delete next[name]
         }
-      }
-
-      if (safeToClear.size > 0) {
-        setSecretValues((prev) => {
-          const next = { ...prev }
-          for (const name of safeToClear) {
-            delete next[name]
-          }
-          return next
-        })
-      }
+        return next
+      })
     }
 
     if (failed.length === 0) {
@@ -768,7 +775,7 @@ export function SecretManager({ client, org, onBack }: SecretManagerProps) {
                   disabled={executing || pendingOps.length === 0}
                   onClick={() => { void handleConfirm() }}
                 >
-                  {executing ? '执行中...' : `确认执行 (${pendingOps.length})`}
+                  {executing ? `执行中... (剩余 ${pendingOps.length})` : `确认执行 (${pendingOps.length})`}
                 </button>
                 <button
                   type="button"
