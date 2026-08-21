@@ -25,6 +25,16 @@ export interface RunnerStats {
   loadRatio: number
 }
 
+/** 排除 GitHub Copilot review/code agent 使用的托管 Runner。 */
+export function isCopilotRunner(runner: OrgRunner): boolean {
+  const searchableText = [runner.name, ...runner.labels.map((label) => label.name)]
+    .join(' ')
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+
+  return /\bcopilot\b|\breview\b|\bcode\s+(?:agent|review)\b/.test(searchableText)
+}
+
 export function classifyRunners(runners: OrgRunner[]): RunnerColumns {
   const columns: RunnerColumns = { idle: [], busy: [], offline: [] }
   for (const runner of runners) {
