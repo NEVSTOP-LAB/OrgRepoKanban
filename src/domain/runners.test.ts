@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { OrgRunner, QueuedWorkflowRun } from '../github/data'
 import {
   attachCurrentJobs,
+  branchCheckKey,
   classifyRunners,
   dedupeLatestWorkflowRuns,
   eventLabel,
@@ -19,6 +20,8 @@ import {
   runnerStats,
   selectReposForScan,
   sortQueuedRuns,
+  sortQueuedRunsBy,
+  uniqueBranchCheckKeys,
   waitMsOf,
   waitRatioOf,
   waitTierOf,
@@ -181,6 +184,46 @@ describe('sortQueuedRuns', () => {
     const runs = [makeRun({ id: 1 })]
     sortQueuedRuns(runs)
     expect(runs).toHaveLength(1)
+  })
+})
+
+describe('sortQueuedRunsBy', () => {
+  const runs = [
+    makeRun({ id: 1, repoName: 'repo-b', headBranch: 'feature-x', createdAt: '2025-01-01T10:00:00Z' }),
+    makeRun({ id: 2, repoName: 'repo-a', headBranch: 'main', createdAt: '2025-01-01T09:00:00Z' }),
+    makeRun({ id: 3, repoName: 'repo-c', headBranch: '', createdAt: '2025-01-01T09:30:00Z' }),
+  ]
+
+  it('wait：createdAt 升序，等待最久优先（默认行为）', () => {
+    expect(sortQueuedRunsBy(runs, 'wait').map((r) => r.id)).toEqual([2, 3, 1])
+  })
+
+  it('created：createdAt 降序，最新触发优先', () => {
+    expect(sortQueuedRunsBy(runs, 'created').map((r) => r.id)).toEqual([1, 3, 2])
+  })
+
+  it('repo：仓库名 A→Z（localeCompare）', () => {
+    expect(sortQueuedRunsBy(runs, 'repo').map((r) => r.id)).toEqual([2, 1, 3])
+  })
+
+  it('branch：分支名 A→Z，空分支排最前', () => {
+    expect(sortQueuedRunsBy(runs, 'branch').map((r) => r.id)).toEqual([3, 1, 2])
+  })
+
+  it('同 key 保持稳定排序（原相对顺序不变）', () => {
+    const stableRuns = [
+      makeRun({ id: 1, repoName: 'repo-a', headBranch: 'main', createdAt: '2025-01-01T10:00:00Z' }),
+      makeRun({ id: 2, repoName: 'repo-a', headBranch: 'main', createdAt: '2025-01-01T09:00:00Z' }),
+      makeRun({ id: 3, repoName: 'repo-a', headBranch: 'main', createdAt: '2025-01-01T11:00:00Z' }),
+    ]
+    expect(sortQueuedRunsBy(stableRuns, 'repo').map((r) => r.id)).toEqual([1, 2, 3])
+    expect(sortQueuedRunsBy(stableRuns, 'branch').map((r) => r.id)).toEqual([1, 2, 3])
+  })
+
+  it('不修改原数组', () => {
+    const copy = [...runs]
+    sortQueuedRunsBy(runs, 'repo')
+    expect(runs).toEqual(copy)
   })
 })
 
@@ -359,7 +402,7 @@ describe('recent workflow run helpers', () => {
     expect(dedupeLatestWorkflowRuns([running, completed]).map((run) => run.id)).toEqual([2])
   })
 
-  it('过滤成功运行时仅保留 success=true 的卡片', () => {
+  it('只显示非成功时过滤掉 success=true 的记录，保留失败与运行中', () => {
     const runs = [
       {
         id: 1,
@@ -395,10 +438,29 @@ describe('recent workflow run helpers', () => {
         conclusion: 'failure',
         success: false,
       },
+      {
+        id: 3,
+        repoName: 'repo-c',
+        workflowName: 'Review',
+        displayTitle: 'Review',
+        runNumber: 3,
+        event: 'pull_request',
+        headBranch: 'feature-x',
+        htmlUrl: 'https://example.com/run/3',
+        startedAt: '2025-01-01T10:00:00Z',
+        completedAt: null,
+        createdAt: '2025-01-01T10:00:00Z',
+        actor: 'carol',
+        status: 'in_progress',
+        conclusion: null,
+        success: false,
+      },
     ]
 
-    expect(filterRecentRunsByStatus(runs, true).map((run) => run.id)).toEqual([1])
-    expect(filterRecentRunsByStatus(runs, false).map((run) => run.id)).toEqual([1, 2])
+    // 只显示非成功：成功记录被过滤，失败与运行中记录（success=false）保留
+    expect(filterRecentRunsByStatus(runs, true).map((run) => run.id)).toEqual([2, 3])
+    // nonSuccessOnly=false 时不过滤
+    expect(filterRecentRunsByStatus(runs, false).map((run) => run.id)).toEqual([1, 2, 3])
   })
 
   it('合并增量更新时保留最新记录并去重', () => {
@@ -438,6 +500,35 @@ describe('recent workflow run helpers', () => {
     }]
 
     expect(mergeRecentRuns(current, incoming).map((run) => run.id)).toEqual([2])
+  })
+})
+
+describe('branchCheckKey / uniqueBranchCheckKeys', () => {
+  it('生成 (仓库, 分支) 去重键', () => {
+    expect(branchCheckKey('repo-a', 'feature-x')).toBe('repo-a::feature-x')
+    expect(branchCheckKey('repo-b', 'release/1.0')).toBe('repo-b::release/1.0')
+  })
+
+  it('按 (仓库, 分支) 去重并跳过空分支', () => {
+    const runs = [
+      makeRun({ id: 1, repoName: 'repo-a', headBranch: 'feature-x' }),
+      makeRun({ id: 2, repoName: 'repo-a', headBranch: 'feature-x' }),
+      makeRun({ id: 3, repoName: 'repo-b', headBranch: 'feature-x' }),
+      makeRun({ id: 4, repoName: 'repo-a', headBranch: '' }),
+    ]
+
+    const keys = uniqueBranchCheckKeys(runs)
+    expect(keys.map((key) => key.key)).toEqual([
+      'repo-a::feature-x',
+      'repo-b::feature-x',
+    ])
+    expect(keys[0]).toMatchObject({ repoName: 'repo-a', branch: 'feature-x' })
+  })
+
+  it('全部为空分支时返回空列表（无需检查）', () => {
+    expect(
+      uniqueBranchCheckKeys([makeRun({ id: 1, headBranch: '' }), makeRun({ id: 2, headBranch: '' })]),
+    ).toEqual([])
   })
 })
 

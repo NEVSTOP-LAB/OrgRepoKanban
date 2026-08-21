@@ -32,7 +32,7 @@ npm run build
 
 当前仓库包含以下验证方式：
 
-- `npm test`：运行 Vitest 测试（14 个测试文件，127 个测试用例）。
+- `npm test`：运行 Vitest 测试（14 个测试文件，140 个测试用例）。
 - `npm run build`：执行 TypeScript 构建与 Vite 生产打包。
 
 ## 项目结构

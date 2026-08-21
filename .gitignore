@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Agent teams 团队状态目录（不应提交）
+.agent-teams/

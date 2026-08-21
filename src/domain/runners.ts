@@ -128,6 +128,40 @@ export function sortQueuedRuns(runs: QueuedWorkflowRun[]): QueuedWorkflowRun[] {
   )
 }
 
+/**
+ * 排队 run 的本地排序方式：仅对当前已加载的数据重排，不发起任何网络请求。
+ * - wait：等待时长最久优先（createdAt 升序），默认值，与 sortQueuedRuns 行为一致
+ * - created：触发时间最新优先（createdAt 降序）
+ * - repo：仓库名 A→Z（localeCompare）
+ * - branch：分支名 A→Z（localeCompare；headBranch 为空串时视为最小、排最前）
+ *
+ * 稳定性说明：ES2019 起 Array.prototype.sort 规范要求稳定排序，
+ * V8 等现代 JS 引擎均已满足，同 key 元素保持原相对顺序。
+ */
+export type QueueSortMode = 'wait' | 'created' | 'repo' | 'branch'
+
+export function sortQueuedRunsBy(
+  runs: QueuedWorkflowRun[],
+  mode: QueueSortMode,
+): QueuedWorkflowRun[] {
+  switch (mode) {
+    case 'created':
+      return [...runs].sort(
+        (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt),
+      )
+    case 'repo':
+      return [...runs].sort((left, right) => left.repoName.localeCompare(right.repoName))
+    case 'branch':
+      return [...runs].sort((left, right) =>
+        (left.headBranch || '').localeCompare(right.headBranch || ''),
+      )
+    case 'wait':
+    default:
+      // 默认值：复用现有 sortQueuedRuns，保证默认视图行为不变
+      return sortQueuedRuns(runs)
+  }
+}
+
 export function waitMsOf(run: QueuedWorkflowRun, now: number): number {
   const timestamp = Date.parse(run.createdAt)
   if (Number.isNaN(timestamp)) {
@@ -190,6 +224,32 @@ export function waitRatioOf(
   }
 
   return Math.min(1, waitMsOf(run, now) / longestMs)
+}
+
+// ── 排队 run 分支存在性检查辅助 ──────────────────────────────────────────
+
+/** 分支存在性检查的去重键：同一 (仓库, 分支) 只检查一次 */
+export function branchCheckKey(repoName: string, branch: string): string {
+  return `${repoName}::${branch}`
+}
+
+/** 排队 run 中需要检查分支存在性的唯一 (仓库, 分支) 列表；空分支跳过（视为存在，不检查） */
+export function uniqueBranchCheckKeys(
+  runs: QueuedWorkflowRun[],
+): Array<{ repoName: string; branch: string; key: string }> {
+  const seen = new Set<string>()
+  const keys: Array<{ repoName: string; branch: string; key: string }> = []
+  for (const run of runs) {
+    if (!run.headBranch) {
+      continue
+    }
+    const key = branchCheckKey(run.repoName, run.headBranch)
+    if (!seen.has(key)) {
+      seen.add(key)
+      keys.push({ repoName: run.repoName, branch: run.headBranch, key })
+    }
+  }
+  return keys
 }
 
 // ── 过滤与展示辅助 ───────────────────────────────────────────────────────
@@ -258,15 +318,20 @@ export function dedupeLatestWorkflowRuns(runs: RecentWorkflowRun[]): RecentWorkf
   })
 }
 
+/**
+ * 最近运行记录的状态过滤：nonSuccessOnly=true 时仅保留「非成功」记录
+ * （失败 / 已取消 / 超时等 success=false 的完成记录，以及运行中 success=false 的记录），
+ * 成功的 workflow 不需要关注，因此默认不勾选展示全部。
+ */
 export function filterRecentRunsByStatus(
   runs: RecentWorkflowRun[],
-  successOnly: boolean,
+  nonSuccessOnly: boolean,
 ): RecentWorkflowRun[] {
-  if (!successOnly) {
+  if (!nonSuccessOnly) {
     return runs
   }
 
-  return runs.filter((run) => run.success)
+  return runs.filter((run) => !run.success)
 }
 
 export function mergeRecentRuns(

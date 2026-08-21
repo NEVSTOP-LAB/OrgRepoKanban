@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { GithubClient, isRateLimitedError } from '../github/client'
 import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RecentWorkflowRun, RunnerJobInfo } from '../github/data'
+import type { QueueSortMode } from '../domain/runners'
 import {
   attachCurrentJobs,
+  branchCheckKey,
   classifyRunners,
   dedupeLatestWorkflowRuns,
   eventLabel,
@@ -17,6 +19,8 @@ import {
   runnerStats,
   selectReposForScan,
   sortQueuedRuns,
+  sortQueuedRunsBy,
+  uniqueBranchCheckKeys,
   waitMsOf,
   waitRatioOf,
   waitTierOf,
@@ -48,6 +52,95 @@ const DEFAULT_AUTO_REFRESH_SECONDS = 180
 
 const MAX_RUNNER_LABELS = 4
 
+/** 分支存在性检查：单次调用（单个仓库）内的并发 worker 数 */
+const BRANCH_CHECK_CONCURRENCY = 4
+
+/**
+ * 分支存在性检查的全局并发上限：scanQueued 有 8 个仓库级 worker，各自最多并行
+ * BRANCH_CHECK_CONCURRENCY 个检查，理论峰值可达 8×4=32；所有仓库共享同一个信号量，
+ * 把任意时刻全局部检查数收敛到该上限，避免对分支接口发起过多并发请求触发限流。
+ */
+const BRANCH_CHECK_GLOBAL_CONCURRENCY = 8
+
+/** 分支存在性检查的并发限制器：信号量，保证任意时刻并发检查数不超过 maxConcurrent */
+interface BranchCheckLimiter {
+  acquire: () => Promise<void>
+  release: () => void
+}
+
+/** 创建共享信号量：acquire 排队等待许可；release 把许可转交给队首等待者（若存在） */
+function createBranchCheckLimiter(maxConcurrent: number): BranchCheckLimiter {
+  let active = 0
+  const waiters: Array<() => void> = []
+  return {
+    acquire: () =>
+      new Promise<void>((resolve) => {
+        if (active < maxConcurrent) {
+          active += 1
+          resolve()
+        } else {
+          waiters.push(resolve)
+        }
+      }),
+    release: () => {
+      const next = waiters.shift()
+      if (next) {
+        // 许可转移给被唤醒的等待者，活跃计数保持不变
+        next()
+      } else {
+        active -= 1
+      }
+    },
+  }
+}
+
+/**
+ * 过滤掉「分支已被合并/删除」的僵尸排队 run（它们永远无法被 runner 执行）：
+ * 按 (repo, branch) 去重 → 并发检查分支存在性（单仓库内 worker 数受 BRANCH_CHECK_CONCURRENCY 限制，
+ * 全局并发由调用方传入的共享 limiter 统一收敛）→
+ * 不存在的隐藏并计入隐藏数；存在 / 检查失败（限流、网络、权限）/ 空分支的 run 保留（fail-open，避免误隐藏）。
+ */
+async function filterStaleQueuedRuns(
+  activeClient: GithubClient,
+  runs: QueuedWorkflowRun[],
+  limiter: BranchCheckLimiter,
+): Promise<{ visible: QueuedWorkflowRun[]; hiddenCount: number }> {
+  if (runs.length === 0) {
+    return { visible: runs, hiddenCount: 0 }
+  }
+
+  const keys = uniqueBranchCheckKeys(runs)
+  const existingKeys = new Set<string>()
+  const queue = [...keys]
+
+  const worker = async () => {
+    while (queue.length > 0) {
+      const item = queue.shift()!
+      await limiter.acquire()
+      try {
+        const exists = await activeClient.branchExists(item.repoName, item.branch)
+        if (exists) {
+          existingKeys.add(item.key)
+        }
+      } catch {
+        // fail-open：检查失败时保留该 run，避免限流/权限问题导致误隐藏
+        existingKeys.add(item.key)
+      } finally {
+        limiter.release()
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(BRANCH_CHECK_CONCURRENCY, keys.length) }, () => worker()),
+  )
+
+  const visible = runs.filter(
+    (run) => !run.headBranch || existingKeys.has(branchCheckKey(run.repoName, run.headBranch)),
+  )
+  return { visible, hiddenCount: runs.length - visible.length }
+}
+
 function formatError(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) {
     return error.message
@@ -78,12 +171,16 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const [scanProgress, setScanProgress] = useState<{ completed: number; total: number } | null>(null)
   const [skippedRepos, setSkippedRepos] = useState(0)
   const [scanFailures, setScanFailures] = useState(0)
+  /** 被隐藏的「分支已合并/删除」僵尸排队 run 数量 */
+  const [hiddenStaleRuns, setHiddenStaleRuns] = useState(0)
 
   // 视图选项
   const [recentOnly, setRecentOnly] = useState(true)
-  const [recentSuccessOnly, setRecentSuccessOnly] = useState(false)
+  const [recentNonSuccessOnly, setRecentNonSuccessOnly] = useState(false)
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(DEFAULT_AUTO_REFRESH_SECONDS)
   const [filterQuery, setFilterQuery] = useState('')
+  /** 排队队列的本地排序方式（默认按等待时长，最久优先） */
+  const [queueSort, setQueueSort] = useState<QueueSortMode>('wait')
   const [now, setNow] = useState(() => Date.now())
 
   const scanEpochRef = useRef(0)
@@ -108,13 +205,17 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     const busyJobs: RunnerJobInfo[] = []
     let skipped = 0
     let failed = 0
+    let hiddenStale = 0
     let completed = 0
     const queue = [...targets]
     const CONCURRENCY = 8
+    // 所有仓库共享的分支检查并发限制器：任意时刻全部分支检查数不超过全局上限
+    const branchCheckLimiter = createBranchCheckLimiter(BRANCH_CHECK_GLOBAL_CONCURRENCY)
 
     setScanProgress({ completed: 0, total: targets.length })
     setSkippedRepos(0)
     setScanFailures(0)
+    setHiddenStaleRuns(0)
     // 开始新一轮扫描前先清空旧队列：targets 为空时也不残留上一轮结果
     setQueuedRuns([])
 
@@ -130,7 +231,14 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
             // 仓库不可读（未启用 Actions / 无权限 / 不存在）
             skipped += 1
           } else {
-            collected.push(...queued)
+            // 先过滤「分支已被合并/删除」的僵尸排队 run，再计入收集结果
+            const { visible, hiddenCount } = await filterStaleQueuedRuns(
+              activeClient,
+              queued,
+              branchCheckLimiter,
+            )
+            hiddenStale += hiddenCount
+            collected.push(...visible)
           }
           if (jobs !== null) {
             busyJobs.push(...jobs)
@@ -145,6 +253,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
           setQueuedRuns(sortQueuedRuns([...collected]))
           setSkippedRepos(skipped)
           setScanFailures(failed)
+          setHiddenStaleRuns(hiddenStale)
           setScanProgress({ completed, total: targets.length })
         }
       }
@@ -319,7 +428,9 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const loadTier = stats.loadRatio < 0.5 ? 'low' : stats.loadRatio < 0.8 ? 'mid' : 'high'
 
   const filteredRuns = queuedRuns
-  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentSuccessOnly).filter((run) =>
+  // 展示顺序按用户选择的本地排序方式重排；最长等待与等待条仍按等待时长计算，与排序无关
+  const sortedRuns = sortQueuedRunsBy(filteredRuns, queueSort)
+  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentNonSuccessOnly).filter((run) =>
     matchesRecentRunFilter(run, filterQuery),
   )
   const longestWait = longestWaitMs(filteredRuns, now)
@@ -547,7 +658,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
           <section className="board-panel queue-panel">
             <div className="section-title">
               <h2>⏳ 排队等待的 workflow</h2>
-              <p>按等待时长排序，等待条相对最长等待绘制；点击条目打开 GitHub 上的运行详情。</p>
+              <p>可按等待时长 / 触发时间 / 仓库 / 分支本地重排，无需重新连接；等待条相对最长等待绘制。</p>
             </div>
 
             <div className="toolbar">
@@ -582,6 +693,19 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                   </div>
                 )}
               </div>
+              <div className="toolbar-side">
+                <select
+                  className="queue-sort-select"
+                  aria-label="队列排序方式"
+                  value={queueSort}
+                  onChange={(event) => setQueueSort(event.target.value as QueueSortMode)}
+                >
+                  <option value="wait">等待时长（最久优先）</option>
+                  <option value="created">触发时间（最新优先）</option>
+                  <option value="repo">仓库名</option>
+                  <option value="branch">分支名</option>
+                </select>
+              </div>
             </div>
 
             {skippedRepos > 0 && (
@@ -593,6 +717,12 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
             {scanFailures > 0 && (
               <div className="queue-skip-hint">
                 ⚠️ {scanFailures} 个仓库扫描失败（限流或网络问题），当前结果可能不完整。
+              </div>
+            )}
+
+            {hiddenStaleRuns > 0 && (
+              <div className="queue-skip-hint">
+                🗑️ 已隐藏 {hiddenStaleRuns} 个排队中的 workflow（对应分支已被合并或删除）
               </div>
             )}
 
@@ -608,7 +738,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
               </div>
             ) : (
               <ol className="queue-list">
-                {filteredRuns.map((run, index) => {
+                {sortedRuns.map((run, index) => {
                   const waitMs = waitMsOf(run, now)
                   const tier = waitTierOf(waitMs)
                   const ratio = waitRatioOf(run, now, longestWait)
@@ -681,13 +811,13 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                   </button>
                 )}
               </div>
-              <label className="recent-success-toggle">
+              <label className="recent-non-success-toggle">
                 <input
                   type="checkbox"
-                  checked={recentSuccessOnly}
-                  onChange={(event) => setRecentSuccessOnly(event.target.checked)}
+                  checked={recentNonSuccessOnly}
+                  onChange={(event) => setRecentNonSuccessOnly(event.target.checked)}
                 />
-                仅显示成功运行
+                只显示非成功运行
               </label>
               {recentProgress && (
                 <span className="recent-loading-status">

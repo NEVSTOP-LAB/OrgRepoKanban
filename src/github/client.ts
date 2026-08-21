@@ -70,7 +70,8 @@ interface WorkflowRunResponse {
   display_title?: string
   run_number: number
   event: string
-  head_branch: string
+  /** GitHub API 对已删除/合并分支的 run 可能返回 null */
+  head_branch?: string | null
   head_sha: string
   html_url: string
   created_at: string
@@ -320,7 +321,7 @@ export class GithubClient {
             displayTitle: run.display_title ?? run.name,
             runNumber: run.run_number,
             event: run.event,
-            headBranch: run.head_branch,
+            headBranch: run.head_branch ?? '',
             headSha: run.head_sha,
             htmlUrl: run.html_url,
             createdAt: run.created_at,
@@ -410,7 +411,7 @@ export class GithubClient {
             displayTitle: run.display_title ?? run.name,
             runNumber: run.run_number,
             event: run.event,
-            headBranch: run.head_branch,
+            headBranch: run.head_branch ?? '',
             htmlUrl: run.html_url,
             startedAt,
             completedAt,
@@ -438,6 +439,25 @@ export class GithubClient {
         return null
       }
 
+      throw error
+    }
+  }
+
+  /**
+   * 检查仓库分支是否仍存在，用于识别「分支已被合并/删除」的僵尸排队 workflow run。
+   * 分支存在（200）→ true；分支不存在（404）→ false；其他状态码/网络错误继续抛出，
+   * 由调用方按 fail-open（放行显示）处理，避免限流或权限问题导致误隐藏。
+   */
+  async branchExists(repoName: string, branch: string): Promise<boolean> {
+    try {
+      await this.rawRequest(
+        `/repos/${encodeURIComponent(this.org)}/${encodeURIComponent(repoName)}/branches/${encodeURIComponent(branch)}`,
+      )
+      return true
+    } catch (error) {
+      if ((error as HttpError).status === 404) {
+        return false
+      }
       throw error
     }
   }
@@ -470,7 +490,7 @@ export class GithubClient {
             displayTitle: run.display_title ?? run.name,
             runNumber: run.run_number,
             event: run.event,
-            headBranch: run.head_branch,
+            headBranch: run.head_branch ?? '',
             headSha: run.head_sha,
             htmlUrl: run.html_url,
             createdAt: run.created_at,

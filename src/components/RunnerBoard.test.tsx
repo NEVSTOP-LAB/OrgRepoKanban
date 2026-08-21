@@ -61,7 +61,7 @@ function queuedRunResponse(repoName: string, runs: Array<Record<string, unknown>
       display_title: run.display_title ?? 'CI / test',
       run_number: 12,
       event: 'push',
-      head_branch: 'main',
+      head_branch: run.head_branch ?? 'main',
       head_sha: 'deadbeef',
       html_url: `https://github.com/acme/${repoName}/actions/runs/9001`,
       created_at: run.created_at ?? '2025-01-01T10:00:00Z',
@@ -76,6 +76,7 @@ const RECENT_RUN_UPDATED_AT = new Date(Date.now() - 60 * 60 * 1000).toISOString(
 function stubConnectedApi(
   queuedByRepo: Record<string, Array<Record<string, unknown>>> = {},
   recentByRepo: Record<string, Array<Record<string, unknown>>> = {},
+  missingBranches: Array<{ repo: string; branch: string }> = [],
 ) {
   fetchMock.mockImplementation(async (input) => {
     const url = String(input)
@@ -87,6 +88,21 @@ function stubConnectedApi(
     }
     if (url.includes('/actions/runs?status=in_progress')) {
       return jsonResponse({ total_count: 0, workflow_runs: [] })
+    }
+    if (url.includes('/branches/')) {
+      // 分支存在性检查：默认 200（分支存在）；命中 missingBranches 的返回 404
+      const repoName = REPOS.find((repo) => url.includes(`/repos/acme/${repo.name}/branches/`))?.name
+      const branch = decodeURIComponent(url.split('/branches/')[1] ?? '')
+      const missing = missingBranches.some(
+        (item) => item.repo === repoName && item.branch === branch,
+      )
+      if (missing) {
+        return new Response(JSON.stringify({ message: 'Not Found' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return jsonResponse({ name: 'main', commit: {} })
     }
     if (url.includes('/jobs')) {
       return jsonResponse({ total_count: 0, jobs: [] })
@@ -148,6 +164,36 @@ describe('RunnerBoard', () => {
     await waitFor(() =>
       expect(screen.getByText('当前没有排队等待的 workflow。')).toBeInTheDocument(),
     )
+  })
+
+  it('hides queued runs whose branch was merged or deleted', async () => {
+    stubConnectedApi(
+      {
+        'repo-a': [{ id: 9001, name: 'CI', display_title: 'CI / test', head_branch: 'feature-x' }],
+      },
+      {},
+      [{ repo: 'repo-a', branch: 'feature-x' }],
+    )
+
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByText('linux-1')).toBeInTheDocument())
+    // 分支已删除的 run 不显示，并出现隐藏提示条
+    expect(screen.queryByText('CI / test')).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/已隐藏 1 个排队中的 workflow（对应分支已被合并或删除）/),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps queued runs whose branch still exists', async () => {
+    stubConnectedApi({
+      'repo-a': [{ id: 9001, name: 'CI', display_title: 'CI / test' }],
+    })
+
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByText('CI / test')).toBeInTheDocument())
+    expect(screen.queryByText(/已隐藏/)).not.toBeInTheDocument()
   })
 
   it('places the filter control in the recent-runs section', async () => {
@@ -349,6 +395,58 @@ describe('RunnerBoard', () => {
     expect(screen.queryByText('失败')).not.toBeInTheDocument()
   })
 
+  it('勾选「只显示非成功运行」后隐藏成功记录并保留失败记录', async () => {
+    stubConnectedApi({}, {
+      'repo-a': [
+        {
+          id: 9201,
+          workflow_id: 101,
+          name: 'Deploy',
+          display_title: 'Deploy production',
+          run_number: 21,
+          event: 'push',
+          head_branch: 'main',
+          html_url: 'https://github.com/acme/repo-a/actions/runs/9201',
+          run_started_at: RECENT_RUN_STARTED_AT,
+          created_at: RECENT_RUN_STARTED_AT,
+          updated_at: RECENT_RUN_UPDATED_AT,
+          status: 'completed',
+          conclusion: 'success',
+          actor: { login: 'alice' },
+        },
+        {
+          id: 9202,
+          workflow_id: 101,
+          name: 'Nightly',
+          display_title: 'Nightly build',
+          run_number: 22,
+          event: 'schedule',
+          head_branch: 'main',
+          html_url: 'https://github.com/acme/repo-a/actions/runs/9202',
+          run_started_at: RECENT_RUN_STARTED_AT,
+          created_at: RECENT_RUN_STARTED_AT,
+          updated_at: RECENT_RUN_UPDATED_AT,
+          status: 'completed',
+          conclusion: 'failure',
+          actor: { login: 'alice' },
+        },
+      ],
+    })
+
+    renderBoard()
+
+    // checkbox 文案存在
+    expect(await screen.findByLabelText('只显示非成功运行')).toBeInTheDocument()
+    // 默认不勾选：成功与失败记录都展示
+    expect(screen.getByText('成功')).toBeInTheDocument()
+    expect(screen.getByText('失败')).toBeInTheDocument()
+
+    // 勾选后：成功记录隐藏，失败记录保留
+    fireEvent.click(screen.getByLabelText('只显示非成功运行'))
+    await waitFor(() => expect(screen.queryByText('成功')).not.toBeInTheDocument())
+    expect(screen.getByText('失败')).toBeInTheDocument()
+  })
+
   it('updates running workflow status after it completes on next refresh', async () => {
     let recentRunsCallCount = 0
     fetchMock.mockImplementation(async (input) => {
@@ -424,5 +522,47 @@ describe('RunnerBoard', () => {
       '180',
       '300',
     ])
+  })
+
+  it('队列支持按仓库名 / 触发时间本地重排，无需重新连接', async () => {
+    stubConnectedApi({
+      'repo-a': [
+        { id: 9001, name: 'CI', display_title: 'CI / a-new', created_at: '2025-01-01T10:00:00Z', head_branch: 'main' },
+        { id: 9002, name: 'CI', display_title: 'CI / a-old', created_at: '2025-01-01T09:30:00Z', head_branch: 'main' },
+      ],
+      'repo-b': [
+        { id: 9003, name: 'CI', display_title: 'CI / b-old', created_at: '2025-01-01T09:00:00Z', head_branch: 'feature-x' },
+      ],
+    })
+
+    const { container } = renderBoard()
+
+    await waitFor(() => expect(screen.getByText('CI / a-new')).toBeInTheDocument())
+
+    const queueTitles = () =>
+      Array.from(container.querySelectorAll('.queue-row')).map((row) => row.textContent ?? '')
+
+    // 默认「等待时长（最久优先）」：repo-b（09:00 最早触发）在最前
+    expect(queueTitles()[0]).toContain('CI / b-old')
+    expect(queueTitles()[1]).toContain('CI / a-old')
+    expect(queueTitles()[2]).toContain('CI / a-new')
+
+    // 切换排序不应触发任何网络请求（纯本地重排）
+    const fetchCount = () => fetchMock.mock.calls.length
+    const countBefore = fetchCount()
+
+    // 切换到「仓库名」：repo-a 的两条排到 repo-b 前，且同仓库保持原相对顺序（稳定）
+    fireEvent.change(screen.getByLabelText('队列排序方式'), { target: { value: 'repo' } })
+    expect(queueTitles()[0]).toContain('CI / a-old')
+    expect(queueTitles()[1]).toContain('CI / a-new')
+    expect(queueTitles()[2]).toContain('CI / b-old')
+    expect(fetchCount()).toBe(countBefore)
+
+    // 切换到「触发时间（最新优先）」：最新触发的排最前
+    fireEvent.change(screen.getByLabelText('队列排序方式'), { target: { value: 'created' } })
+    expect(queueTitles()[0]).toContain('CI / a-new')
+    expect(queueTitles()[1]).toContain('CI / a-old')
+    expect(queueTitles()[2]).toContain('CI / b-old')
+    expect(fetchCount()).toBe(countBefore)
   })
 })
