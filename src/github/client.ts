@@ -83,6 +83,9 @@ interface WorkflowRunResponse {
 
 interface WorkflowResponse {
   id: number
+  name?: string
+  path?: string
+  state?: string
 }
 
 interface WorkflowRunJobResponse {
@@ -366,7 +369,12 @@ export class GithubClient {
           workflows?: WorkflowResponse[]
         } | null
         for (const workflow of payload?.workflows ?? []) {
-          workflowIds.add(workflow.id)
+          const workflowText = `${workflow.name ?? ''} ${workflow.path ?? ''}`.toLowerCase()
+          const isActive = workflow.state === undefined || workflow.state === 'active'
+          const isCopilotWorkflow = workflowText.includes('copilot')
+          if (isActive && !isCopilotWorkflow) {
+            workflowIds.add(workflow.id)
+          }
         }
         workflowNext = this.extractNextUrl(response.headers.get('link'))
       }
