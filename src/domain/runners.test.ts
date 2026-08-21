@@ -11,6 +11,7 @@ import {
   fuzzyIncludes,
   isRecentlyPushed,
   longestWaitMs,
+  matchesRecentRunFilter,
   matchesRunFilter,
   mergeRecentRuns,
   osIcon,
@@ -252,6 +253,30 @@ describe('fuzzyIncludes / matchesRunFilter', () => {
 })
 
 describe('recent workflow run helpers', () => {
+  it('过滤最近记录时匹配仓库、workflow、标题与分支', () => {
+    const run = {
+      id: 1,
+      repoName: 'service-api',
+      workflowName: 'Deploy',
+      displayTitle: 'Deploy production',
+      runNumber: 1,
+      event: 'push',
+      headBranch: 'release/1.0',
+      htmlUrl: 'https://example.com/run/1',
+      startedAt: '2025-01-01T09:00:00Z',
+      createdAt: '2025-01-01T09:00:00Z',
+      actor: 'alice',
+      status: 'completed',
+      conclusion: 'success',
+      success: true,
+    }
+
+    expect(matchesRecentRunFilter(run, 'api')).toBe(true)
+    expect(matchesRecentRunFilter(run, 'production')).toBe(true)
+    expect(matchesRecentRunFilter(run, 'release')).toBe(true)
+    expect(matchesRecentRunFilter(run, 'ghost')).toBe(false)
+  })
+
   it('按 workflow 去重并按最新完成时间排序', () => {
     const runs = [
       {

@@ -10,7 +10,7 @@ import {
   filterRecentRunsByStatus,
   formatWaitDuration,
   longestWaitMs,
-  matchesRunFilter,
+  matchesRecentRunFilter,
   mergeRecentRuns,
   osIcon,
   runnerStats,
@@ -73,6 +73,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const [runnersUnavailable, setRunnersUnavailable] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedWorkflowRun[]>([])
   const [recentRuns, setRecentRuns] = useState<RecentWorkflowRun[]>([])
+  const [recentProgress, setRecentProgress] = useState<{ completed: number; total: number } | null>(null)
   const [scanProgress, setScanProgress] = useState<{ completed: number; total: number } | null>(null)
   const [skippedRepos, setSkippedRepos] = useState(0)
   const [scanFailures, setScanFailures] = useState(0)
@@ -153,27 +154,32 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
 
   const refreshRecentRuns = useCallback(async (activeClient: GithubClient, repoList: GithubRepo[]) => {
     const targets = selectReposForScan(repoList, Date.now(), recentOnlyRef.current)
-    const collected: RecentWorkflowRun[] = []
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+    let completed = 0
+
+    setRecentRuns([])
+    setRecentProgress({ completed: 0, total: targets.length })
 
     for (const repo of targets) {
       try {
         const runs = await activeClient.listRecentWorkflowRuns(repo.name)
         if (runs) {
-          collected.push(...runs)
+          setRecentRuns((prev) =>
+            mergeRecentRuns(prev, dedupeLatestWorkflowRuns(runs)).filter((run) => {
+              const timestamp = Date.parse(run.completedAt ?? run.startedAt)
+              return Number.isNaN(timestamp) || timestamp >= cutoff
+            }),
+          )
         }
       } catch {
         // 历史记录拉取失败不阻塞现有队列与 Runner 显示；下一次刷新会重试
       }
+
+      completed += 1
+      setRecentProgress({ completed, total: targets.length })
     }
 
-    const nextRuns = dedupeLatestWorkflowRuns(collected)
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-    setRecentRuns((prev) =>
-      mergeRecentRuns(prev, nextRuns).filter((r) => {
-        const ts = Date.parse(r.completedAt ?? r.startedAt)
-        return Number.isNaN(ts) || ts >= cutoff
-      }),
-    )
+    setRecentProgress(null)
   }, [])
 
   const loadAll = useCallback(async (activeClient: GithubClient, announce: boolean) => {
@@ -285,10 +291,10 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const loadPercent = Math.round(stats.loadRatio * 100)
   const loadTier = stats.loadRatio < 0.5 ? 'low' : stats.loadRatio < 0.8 ? 'mid' : 'high'
 
-  const filteredRuns = filterQuery.trim()
-    ? queuedRuns.filter((run) => matchesRunFilter(run, filterQuery))
-    : queuedRuns
-  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentSuccessOnly)
+  const filteredRuns = queuedRuns
+  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentSuccessOnly).filter((run) =>
+    matchesRecentRunFilter(run, filterQuery),
+  )
   const longestWait = longestWaitMs(filteredRuns, now)
 
   // ── 渲染 ─────────────────────────────────────────────────────────────
@@ -549,28 +555,6 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                   </div>
                 )}
               </div>
-              <div className="toolbar-side">
-                <div className="search-box toolbar-search">
-                  <input
-                    type="text"
-                    className="queue-filter-input"
-                    aria-label="过滤排队 workflow"
-                    placeholder="过滤仓库 / workflow / 分支…"
-                    value={filterQuery}
-                    onChange={(event) => setFilterQuery(event.target.value)}
-                  />
-                  {filterQuery && (
-                    <button
-                      type="button"
-                      className="search-clear"
-                      aria-label="清空过滤"
-                      onClick={() => setFilterQuery('')}
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              </div>
             </div>
 
             {skippedRepos > 0 && (
@@ -590,11 +574,9 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                 <span className="queue-empty-icon">🎉</span>
                 <p>当前没有排队等待的 workflow。</p>
                 <p className="queue-empty-sub">
-                  {filterQuery.trim()
-                    ? '换个过滤词试试，或清空过滤。'
-                    : recentOnly
-                      ? '所有已触发的工作流要么已完成，要么正在执行。仅扫描了 24 小时内有推送的仓库，定时/手动触发且仓库久未推送的任务不在扫描范围内。'
-                      : '所有已触发的工作流要么已完成，要么正在执行。'}
+                  {recentOnly
+                    ? '所有已触发的工作流要么已完成，要么正在执行。仅扫描了 24 小时内有推送的仓库，定时/手动触发且仓库久未推送的任务不在扫描范围内。'
+                    : '所有已触发的工作流要么已完成，要么正在执行。'}
                 </p>
               </div>
             ) : (
@@ -652,6 +634,26 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
             </div>
 
             <div className="recent-toolbar">
+              <div className="search-box toolbar-search">
+                <input
+                  type="text"
+                  className="queue-filter-input"
+                  aria-label="过滤最近 30 天运行记录"
+                  placeholder="过滤仓库 / workflow / 分支…"
+                  value={filterQuery}
+                  onChange={(event) => setFilterQuery(event.target.value)}
+                />
+                {filterQuery && (
+                  <button
+                    type="button"
+                    className="search-clear"
+                    aria-label="清空最近记录过滤"
+                    onClick={() => setFilterQuery('')}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
               <label className="recent-success-toggle">
                 <input
                   type="checkbox"
@@ -660,6 +662,11 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                 />
                 仅显示成功运行
               </label>
+              {recentProgress && (
+                <span className="recent-loading-status">
+                  正在加载 {recentProgress.completed}/{recentProgress.total} 个仓库
+                </span>
+              )}
             </div>
 
             {filteredRecentRuns.length === 0 ? (
@@ -688,7 +695,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                     </div>
                     <strong className="recent-card-title">{run.displayTitle || run.workflowName}</strong>
                     <div className="recent-card-meta">
-                      <span>{run.repoName}</span>
+                      <span className="recent-repo-name">{run.repoName}</span>
                       <span>#{run.runNumber}</span>
                     </div>
                     <div className="recent-card-footer">

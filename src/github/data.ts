@@ -113,6 +113,8 @@ export interface QueuedWorkflowRun {
 export interface RecentWorkflowRun {
   id: number
   repoName: string
+  /** 当前仍存在的 workflow.yml 对应的 workflow ID */
+  workflowId?: number
   workflowName: string
   displayTitle: string
   runNumber: number

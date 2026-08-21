@@ -70,7 +70,10 @@ function queuedRunResponse(repoName: string, runs: Array<Record<string, unknown>
   }
 }
 
-function stubConnectedApi(queuedByRepo: Record<string, Array<Record<string, unknown>>> = {}) {
+function stubConnectedApi(
+  queuedByRepo: Record<string, Array<Record<string, unknown>>> = {},
+  recentByRepo: Record<string, Array<Record<string, unknown>>> = {},
+) {
   fetchMock.mockImplementation(async (input) => {
     const url = String(input)
     if (url.includes('/actions/runners')) {
@@ -84,6 +87,16 @@ function stubConnectedApi(queuedByRepo: Record<string, Array<Record<string, unkn
     }
     if (url.includes('/jobs')) {
       return jsonResponse({ total_count: 0, jobs: [] })
+    }
+    if (url.includes('/actions/workflows')) {
+      return jsonResponse({ total_count: 0, workflows: [] })
+    }
+    if (url.includes('/actions/runs?per_page=100')) {
+      const repoName = REPOS.find((repo) => url.includes(`/repos/acme/${repo.name}/`))?.name
+      return jsonResponse({
+        total_count: recentByRepo[repoName ?? 'repo-a']?.length ?? 0,
+        workflow_runs: recentByRepo[repoName ?? 'repo-a'] ?? [],
+      })
     }
     if (url.includes('/actions/runs?status=queued')) {
       const repoName = REPOS.find((repo) => url.includes(`/repos/acme/${repo.name}/`))?.name
@@ -134,22 +147,12 @@ describe('RunnerBoard', () => {
     )
   })
 
-  it('filters queued runs by keyword', async () => {
-    stubConnectedApi({
-      'repo-a': [{ id: 9001, name: 'CI', display_title: 'CI / test' }],
-      'repo-b': [{ id: 9002, name: 'Deploy', display_title: 'Deploy / prod' }],
-    })
-
+  it('places the filter control in the recent-runs section', async () => {
+    stubConnectedApi()
     renderBoard()
-    await waitFor(() => expect(screen.getByText('CI / test')).toBeInTheDocument())
-    expect(screen.getByText('Deploy / prod')).toBeInTheDocument()
-
-    fireEvent.change(screen.getByPlaceholderText('过滤仓库 / workflow / 分支…'), {
-      target: { value: 'deploy' },
-    })
-
-    await waitFor(() => expect(screen.queryByText('CI / test')).not.toBeInTheDocument())
-    expect(screen.getByText('Deploy / prod')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('linux-1')).toBeInTheDocument())
+    expect(screen.getByLabelText('过滤最近 30 天运行记录')).toBeInTheDocument()
+    expect(screen.queryByLabelText('过滤排队 workflow')).not.toBeInTheDocument()
   })
   it('reports scan failures separately from unreadable repos', async () => {
     fetchMock.mockImplementation(async (input) => {
