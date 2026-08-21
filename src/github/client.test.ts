@@ -405,7 +405,7 @@ describe('GithubClient', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({
           total_count: 1,
-          workflows: [{ id: 101, name: 'Current' }],
+          workflows: [{ id: 101, name: 'Current', path: '.github/workflows/current.yml', state: 'active' }],
         }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -455,6 +455,80 @@ describe('GithubClient', () => {
 
     expect(runs?.map((run) => run.id)).toEqual([1])
     expect(fetchMock.mock.calls[0]?.[0]).toContain('/repos/acme/repo-a/actions/workflows')
+  })
+
+  it('excludes deleted and Copilot workflows from recent runs', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          total_count: 3,
+          workflows: [
+            { id: 101, name: 'Current', path: '.github/workflows/current.yml', state: 'active' },
+            { id: 102, name: 'Old workflow', path: '.github/workflows/old.yml', state: 'deleted' },
+            { id: 103, name: 'Copilot code review', path: '.github/workflows/copilot-pull-request-reviewer/copilot-pull-request-reviewer.yml', state: 'active' },
+          ],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          total_count: 3,
+          workflow_runs: [
+            {
+              id: 1,
+              workflow_id: 101,
+              name: 'Current',
+              run_number: 1,
+              event: 'push',
+              head_branch: 'main',
+              head_sha: 'abc',
+              html_url: 'https://example.com/run/1',
+              created_at: '2025-01-01T10:00:00Z',
+              updated_at: '2025-01-01T10:05:00Z',
+              status: 'completed',
+              conclusion: 'success',
+            },
+            {
+              id: 2,
+              workflow_id: 102,
+              name: 'Old workflow',
+              run_number: 2,
+              event: 'push',
+              head_branch: 'main',
+              head_sha: 'def',
+              html_url: 'https://example.com/run/2',
+              created_at: '2025-01-01T11:00:00Z',
+              updated_at: '2025-01-01T11:05:00Z',
+              status: 'completed',
+              conclusion: 'failure',
+            },
+            {
+              id: 3,
+              workflow_id: 103,
+              name: 'Copilot code review',
+              run_number: 3,
+              event: 'dynamic',
+              head_branch: 'main',
+              head_sha: 'ghi',
+              html_url: 'https://example.com/run/3',
+              created_at: '2025-01-01T12:00:00Z',
+              updated_at: '2025-01-01T12:05:00Z',
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+
+    const client = new GithubClient('token-value', 'acme')
+    const runs = await client.listRecentWorkflowRuns('repo-a', Number.MAX_SAFE_INTEGER)
+
+    expect(runs?.map((run) => run.id)).toEqual([1])
   })
 
   it('returns null for unreadable repos in busy runner jobs', async () => {
