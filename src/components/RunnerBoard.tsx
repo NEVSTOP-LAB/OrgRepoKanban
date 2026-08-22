@@ -17,6 +17,7 @@ import {
   mergeRecentRuns,
   osIcon,
   runnerStats,
+  selectReposForRecentHistory,
   selectReposForScan,
   sortQueuedRuns,
   sortQueuedRunsBy,
@@ -277,7 +278,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     repoList: GithubRepo[],
     repoNames?: ReadonlySet<string>,
   ) => {
-    const targets = selectReposForScan(repoList, Date.now(), recentOnlyRef.current)
+    const targets = selectReposForRecentHistory(repoList, Date.now())
       .filter((repo) => repoNames === undefined || repoNames.has(repo.name))
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
     let completed = 0
@@ -454,7 +455,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
           </p>
           <div className="badge-row">
             <span className="badge">只读监控，无任何写操作</span>
-            <span className="badge">默认仅扫描 24 小时内有推送的仓库</span>
+            <span className="badge">排队队列默认仅扫描 24 小时内有推送的仓库</span>
             <span className="badge">支持自动刷新</span>
           </div>
         </div>
@@ -787,7 +788,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
           <section className="board-panel recent-panel">
             <div className="section-title">
               <h2>📊 最近 30 天运行记录</h2>
-              <p>按时间倒序展示每个 workflow 的最新运行，使用紧凑矩阵卡片。</p>
+              <p>按时间倒序展示每个 workflow 的最新运行；仅统计最近 30 天内有推送的仓库。</p>
             </div>
 
             <div className="recent-toolbar">

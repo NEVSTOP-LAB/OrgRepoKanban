@@ -18,6 +18,7 @@ import {
   mergeRecentRuns,
   osIcon,
   runnerStats,
+  selectReposForRecentHistory,
   selectReposForScan,
   sortQueuedRuns,
   sortQueuedRunsBy,
@@ -167,6 +168,30 @@ describe('selectReposForScan', () => {
 
   it('recentOnly 为 false 时返回全部仓库', () => {
     expect(selectReposForScan(repos, now, false)).toHaveLength(3)
+  })
+})
+
+describe('selectReposForRecentHistory', () => {
+  const now = Date.parse('2025-01-31T12:00:00Z')
+  const repos = [
+    { id: 1, name: 'newest', full_name: 'acme/newest', html_url: '', pushed_at: '2025-01-31T11:00:00Z' },
+    { id: 2, name: 'ten-days', full_name: 'acme/ten-days', html_url: '', pushed_at: '2025-01-21T12:00:00Z' },
+    { id: 3, name: 'forty-days', full_name: 'acme/forty-days', html_url: '', pushed_at: '2024-12-22T12:00:00Z' },
+    { id: 4, name: 'never', full_name: 'acme/never', html_url: '', pushed_at: null },
+  ]
+
+  it('只保留最近 30 天内有推送的仓库，与 24 小时口径解耦', () => {
+    // 10 天前推送的仓库在 24 小时口径下会被排除，但在 30 天历史口径下应保留
+    expect(selectReposForRecentHistory(repos, now).map((r) => r.name)).toEqual([
+      'newest',
+      'ten-days',
+    ])
+  })
+
+  it('超过 30 天未推送或从未推送的仓库被排除', () => {
+    const selected = selectReposForRecentHistory(repos, now).map((r) => r.name)
+    expect(selected).not.toContain('forty-days')
+    expect(selected).not.toContain('never')
   })
 })
 
