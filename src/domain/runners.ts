@@ -94,6 +94,7 @@ export const RECENT_PUSH_WINDOW_MS = 24 * 60 * 60 * 1000
 export function isRecentlyPushed(
   pushedAt: string | null | undefined,
   now: number,
+  windowMs: number = RECENT_PUSH_WINDOW_MS,
 ): boolean {
   if (!pushedAt) {
     return false
@@ -104,7 +105,7 @@ export function isRecentlyPushed(
     return false
   }
 
-  return now - timestamp <= RECENT_PUSH_WINDOW_MS
+  return now - timestamp <= windowMs
 }
 
 /** 排队 workflow 只可能来自近期有推送的仓库，默认仅扫描 24 小时内推送过的仓库 */
@@ -118,6 +119,23 @@ export function selectReposForScan(
   }
 
   return repos.filter((repo) => isRecentlyPushed(repo.pushed_at, now))
+}
+
+// ── 最近运行记录的仓库选择 ────────────────────────────────────────────────
+
+/** 最近 30 天运行记录只关注「最近 30 天内推送过」的仓库 */
+export const RECENT_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * 最近 30 天运行记录面板的仓库选择：只取「最近 30 天内有推送」的仓库。
+ * 与排队队列的 24 小时口径解耦——30 天记录要覆盖完整的历史窗口，
+ * 又不必对全部仓库做全量历史拉取，把仓库数量收敛到近期活跃范围。
+ */
+export function selectReposForRecentHistory(
+  repos: GithubRepo[],
+  now: number,
+): GithubRepo[] {
+  return repos.filter((repo) => isRecentlyPushed(repo.pushed_at, now, RECENT_HISTORY_WINDOW_MS))
 }
 
 // ── 排队 run 排序与等待时长 ──────────────────────────────────────────────
