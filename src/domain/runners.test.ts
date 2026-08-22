@@ -17,6 +17,7 @@ import {
   matchesRunFilter,
   mergeRecentRuns,
   osIcon,
+  recentRunKind,
   runnerStats,
   selectReposForRecentHistory,
   selectReposForScan,
@@ -427,7 +428,26 @@ describe('recent workflow run helpers', () => {
     expect(dedupeLatestWorkflowRuns([running, completed]).map((run) => run.id)).toEqual([2])
   })
 
-  it('只显示非成功时过滤掉 success=true 的记录，保留失败与运行中', () => {
+  it('recentRunKind 正确区分运行中/成功/失败/取消', () => {
+    const base = {
+      repoName: 'repo-a',
+      workflowName: 'CI',
+      displayTitle: 'CI',
+      runNumber: 1,
+      event: 'push',
+      headBranch: 'main',
+      htmlUrl: 'https://example.com/run/1',
+      startedAt: '2025-01-01T09:00:00Z',
+      createdAt: '2025-01-01T09:00:00Z',
+      actor: 'alice',
+    }
+    expect(recentRunKind({ ...base, id: 1, status: 'completed', conclusion: 'success', success: true, completedAt: '2025-01-01T09:10:00Z' })).toBe('success')
+    expect(recentRunKind({ ...base, id: 2, status: 'completed', conclusion: 'failure', success: false, completedAt: '2025-01-01T09:10:00Z' })).toBe('failure')
+    expect(recentRunKind({ ...base, id: 3, status: 'in_progress', conclusion: null, success: false, completedAt: null })).toBe('running')
+    expect(recentRunKind({ ...base, id: 4, status: 'completed', conclusion: 'cancelled', success: false, completedAt: '2025-01-01T09:10:00Z' })).toBe('cancelled')
+  })
+
+  it('状态筛选：all 不过滤，其余按展示类型匹配', () => {
     const runs = [
       {
         id: 1,
@@ -480,12 +500,32 @@ describe('recent workflow run helpers', () => {
         conclusion: null,
         success: false,
       },
+      {
+        id: 4,
+        repoName: 'repo-d',
+        workflowName: 'Nightly',
+        displayTitle: 'Nightly',
+        runNumber: 4,
+        event: 'schedule',
+        headBranch: 'main',
+        htmlUrl: 'https://example.com/run/4',
+        startedAt: '2025-01-01T08:00:00Z',
+        completedAt: '2025-01-01T08:30:00Z',
+        createdAt: '2025-01-01T08:00:00Z',
+        actor: 'dave',
+        status: 'completed',
+        conclusion: 'cancelled',
+        success: false,
+      },
     ]
 
-    // 只显示非成功：成功记录被过滤，失败与运行中记录（success=false）保留
-    expect(filterRecentRunsByStatus(runs, true).map((run) => run.id)).toEqual([2, 3])
-    // nonSuccessOnly=false 时不过滤
-    expect(filterRecentRunsByStatus(runs, false).map((run) => run.id)).toEqual([1, 2, 3])
+    // all 不过滤
+    expect(filterRecentRunsByStatus(runs, 'all').map((run) => run.id)).toEqual([1, 2, 3, 4])
+    // 按类型过滤：取消与失败的记录互不影响
+    expect(filterRecentRunsByStatus(runs, 'failure').map((run) => run.id)).toEqual([2])
+    expect(filterRecentRunsByStatus(runs, 'cancelled').map((run) => run.id)).toEqual([4])
+    expect(filterRecentRunsByStatus(runs, 'running').map((run) => run.id)).toEqual([3])
+    expect(filterRecentRunsByStatus(runs, 'success').map((run) => run.id)).toEqual([1])
   })
 
   it('合并增量更新时保留最新记录并去重', () => {

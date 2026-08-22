@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { GithubClient, isRateLimitedError } from '../github/client'
 import type { GithubRepo, OrgRunner, QueuedWorkflowRun, RecentWorkflowRun, RunnerJobInfo } from '../github/data'
-import type { QueueSortMode } from '../domain/runners'
+import type { QueueSortMode, RecentRunFilter, RecentRunKind } from '../domain/runners'
 import {
   attachCurrentJobs,
   branchCheckKey,
@@ -16,6 +16,7 @@ import {
   matchesRecentRunFilter,
   mergeRecentRuns,
   osIcon,
+  recentRunKind,
   runnerStats,
   selectReposForRecentHistory,
   selectReposForScan,
@@ -26,6 +27,7 @@ import {
   waitRatioOf,
   waitTierOf,
 } from '../domain/runners'
+import { loadRecentRunsCache, saveRecentRunsCache } from '../domain/recentRunsCache'
 
 // ── 类型与常量 ───────────────────────────────────────────────────────────
 
@@ -52,6 +54,23 @@ const AUTO_REFRESH_OPTIONS = [
 const DEFAULT_AUTO_REFRESH_SECONDS = 180
 
 const MAX_RUNNER_LABELS = 4
+
+/** 最近运行记录卡片的展示类型 → 中文标签 */
+const RECENT_STATUS_LABEL: Record<RecentRunKind, string> = {
+  running: '运行中',
+  success: '成功',
+  failure: '失败',
+  cancelled: '取消',
+}
+
+/** 最近运行记录状态筛选下拉选项 */
+const RECENT_FILTER_OPTIONS: Array<{ value: RecentRunFilter; label: string }> = [
+  { value: 'all', label: '全部状态' },
+  { value: 'running', label: '运行中' },
+  { value: 'success', label: '成功' },
+  { value: 'failure', label: '失败' },
+  { value: 'cancelled', label: '取消' },
+]
 
 /** 分支存在性检查：单次调用（单个仓库）内的并发 worker 数 */
 const BRANCH_CHECK_CONCURRENCY = 4
@@ -96,16 +115,17 @@ function createBranchCheckLimiter(maxConcurrent: number): BranchCheckLimiter {
 }
 
 /**
- * 过滤掉「分支已被合并/删除」的僵尸排队 run（它们永远无法被 runner 执行）：
+ * 过滤掉「分支已被合并/删除」的僵尸 run（排队队列永远无法被执行；最近运行记录则不应再展示）：
  * 按 (repo, branch) 去重 → 并发检查分支存在性（单仓库内 worker 数受 BRANCH_CHECK_CONCURRENCY 限制，
  * 全局并发由调用方传入的共享 limiter 统一收敛）→
  * 不存在的隐藏并计入隐藏数；存在 / 检查失败（限流、网络、权限）/ 空分支的 run 保留（fail-open，避免误隐藏）。
+ * queue 与 recent 两类 run 都具备 repoName/headBranch，故此处泛型复用同一套规则。
  */
-async function filterStaleQueuedRuns(
+async function filterRunsByExistingBranches<T extends { repoName: string; headBranch: string }>(
   activeClient: GithubClient,
-  runs: QueuedWorkflowRun[],
+  runs: T[],
   limiter: BranchCheckLimiter,
-): Promise<{ visible: QueuedWorkflowRun[]; hiddenCount: number }> {
+): Promise<{ visible: T[]; hiddenCount: number }> {
   if (runs.length === 0) {
     return { visible: runs, hiddenCount: 0 }
   }
@@ -167,7 +187,10 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const [runners, setRunners] = useState<OrgRunner[]>([])
   const [runnersUnavailable, setRunnersUnavailable] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedWorkflowRun[]>([])
-  const [recentRuns, setRecentRuns] = useState<RecentWorkflowRun[]>([])
+  const [recentRuns, setRecentRuns] = useState<RecentWorkflowRun[]>(
+    // 启动时先从本地缓存水合最近运行记录，实现快速首屏；随后由全量刷新覆盖
+    () => loadRecentRunsCache(org) ?? [],
+  )
   const [recentProgress, setRecentProgress] = useState<{ completed: number; total: number } | null>(null)
   const [scanProgress, setScanProgress] = useState<{ completed: number; total: number } | null>(null)
   const [skippedRepos, setSkippedRepos] = useState(0)
@@ -177,7 +200,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
 
   // 视图选项
   const [recentOnly, setRecentOnly] = useState(true)
-  const [recentNonSuccessOnly, setRecentNonSuccessOnly] = useState(false)
+  const [recentFilter, setRecentFilter] = useState<RecentRunFilter>('all')
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(DEFAULT_AUTO_REFRESH_SECONDS)
   const [filterQuery, setFilterQuery] = useState('')
   /** 排队队列的本地排序方式（默认按等待时长，最久优先） */
@@ -233,7 +256,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
             skipped += 1
           } else {
             // 先过滤「分支已被合并/删除」的僵尸排队 run，再计入收集结果
-            const { visible, hiddenCount } = await filterStaleQueuedRuns(
+            const { visible, hiddenCount } = await filterRunsByExistingBranches(
               activeClient,
               queued,
               branchCheckLimiter,
@@ -278,32 +301,41 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     repoList: GithubRepo[],
     repoNames?: ReadonlySet<string>,
   ) => {
-    const targets = selectReposForRecentHistory(repoList, Date.now())
-      .filter((repo) => repoNames === undefined || repoNames.has(repo.name))
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-    let completed = 0
+    const now = Date.now()
+    const scopeRepos = selectReposForRecentHistory(repoList, now)
+    const scopeNames = new Set(scopeRepos.map((repo) => repo.name))
+    // 仅刷新范围内且命中 repoNames（刷新时）的仓库；repoNames 未传（首刷）则刷新范围内全部
+    const targets = scopeRepos.filter((repo) => repoNames === undefined || repoNames.has(repo.name))
+    const cutoff = now - 30 * 24 * 60 * 60 * 1000
+    const branchCheckLimiter = createBranchCheckLimiter(BRANCH_CHECK_GLOBAL_CONCURRENCY)
 
-    if (repoNames === undefined) {
-      setRecentRuns([])
-    }
+    // 增量基础集：保留仍在 30 天范围内的仓库记录，剔除已滚出范围的仓库；
+    // 缓存里已存在这些仓库的记录时，首屏可立即展示。
+    let result = recentRunsRef.current.filter((run) => scopeNames.has(run.repoName))
+    setRecentRuns(result)
     setRecentProgress({ completed: 0, total: targets.length })
 
+    let completed = 0
     for (const repo of targets) {
       try {
         const runs = await activeClient.listRecentWorkflowRuns(repo.name)
         if (runs) {
-          setRecentRuns((prev) =>
-            mergeRecentRuns(
-              repoNames === undefined ? prev : prev.filter((run) => run.repoName !== repo.name),
-              dedupeLatestWorkflowRuns(runs),
-            ).filter((run) => {
-              const timestamp = Date.parse(run.completedAt ?? run.startedAt)
-              return Number.isNaN(timestamp) || timestamp >= cutoff
-            }),
-          )
+          const deduped = dedupeLatestWorkflowRuns(runs)
+          const { visible } = await filterRunsByExistingBranches(activeClient, deduped, branchCheckLimiter)
+          // 用本次新结果完整替换该仓库的旧记录（较新的卡片状态覆盖旧值）；
+          // 该仓库已不在「30 天有推送」范围内的记录在下方超时过滤中剔除。
+          result = mergeRecentRuns(
+            result.filter((run) => run.repoName !== repo.name),
+            visible,
+          ).filter((run) => {
+            const timestamp = Date.parse(run.completedAt ?? run.startedAt)
+            return Number.isNaN(timestamp) || timestamp >= cutoff
+          })
+          setRecentRuns(result)
         }
+        // runs === null（仓库不可读）时保留缓存中的旧记录，不剔除
       } catch {
-        // 历史记录拉取失败不阻塞现有队列与 Runner 显示；下一次刷新会重试
+        // 拉取失败保留缓存中的旧记录；下一次刷新会重试
       }
 
       completed += 1
@@ -311,7 +343,9 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
     }
 
     setRecentProgress(null)
-  }, [])
+    // 增量合并结果写回缓存（带时间戳），供下次启动快速首屏
+    saveRecentRunsCache(org.trim(), result)
+  }, [org])
 
   const loadAll = useCallback(async (activeClient: GithubClient, announce: boolean) => {
     if (refreshingRef.current) {
@@ -388,7 +422,8 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
 
   // ── 首次加载与自动刷新 ─────────────────────────────────────────────
 
-  // 首次挂载自动加载；用宏任务触发避免 effect 内同步级联 setState
+  // 首次挂载自动加载；用宏任务触发避免 effect 内同步级联 setState。
+  // recentRuns 已从缓存惰性初始化（快速首屏），这里直接启动一次全量刷新覆盖为最新数据。
   useEffect(() => {
     const timer = setTimeout(() => {
       void loadAll(client, true)
@@ -431,7 +466,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
   const filteredRuns = queuedRuns
   // 展示顺序按用户选择的本地排序方式重排；最长等待与等待条仍按等待时长计算，与排序无关
   const sortedRuns = sortQueuedRunsBy(filteredRuns, queueSort)
-  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentNonSuccessOnly).filter((run) =>
+  const filteredRecentRuns = filterRecentRunsByStatus(recentRuns, recentFilter).filter((run) =>
     matchesRecentRunFilter(run, filterQuery),
   )
   const longestWait = longestWaitMs(filteredRuns, now)
@@ -812,13 +847,19 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
                   </button>
                 )}
               </div>
-              <label className="recent-non-success-toggle">
-                <input
-                  type="checkbox"
-                  checked={recentNonSuccessOnly}
-                  onChange={(event) => setRecentNonSuccessOnly(event.target.checked)}
-                />
-                只显示非成功运行
+              <label className="recent-filter-toggle">
+                <select
+                  className="recent-filter-select"
+                  aria-label="筛选最近运行状态"
+                  value={recentFilter}
+                  onChange={(event) => setRecentFilter(event.target.value as RecentRunFilter)}
+                >
+                  {RECENT_FILTER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               {recentProgress && (
                 <span className="recent-loading-status">
@@ -834,37 +875,40 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
               </div>
             ) : (
               <div className="recent-grid">
-                {filteredRecentRuns.map((run) => (
-                  <a
-                    key={`${run.repoName}:${run.workflowName}:${run.id}`}
-                    className={`recent-card ${run.status !== 'completed' ? 'is-running' : run.success ? 'is-success' : 'is-failure'}`}
-                    href={run.htmlUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    title="在 GitHub 打开该 workflow 的运行详情"
-                  >
-                    <div className="recent-card-topline">
-                      <span className="recent-status-badge">
-                        {run.status !== 'completed' ? '运行中' : run.success ? '成功' : '失败'}
-                      </span>
-                      <span className="recent-time">
-                        {new Date(run.completedAt ?? run.startedAt).toLocaleDateString('zh-CN')}
-                      </span>
-                    </div>
-                    <span className="recent-card-repo">{run.repoName}</span>
-                    <strong className="recent-card-title">{run.workflowName}</strong>
-                    {run.displayTitle && run.displayTitle !== run.workflowName && (
-                      <span className="recent-card-display-title">{run.displayTitle}</span>
-                    )}
-                    <div className="recent-card-meta">
-                      <span>#{run.runNumber}</span>
-                    </div>
-                    <div className="recent-card-footer">
-                      <span>{run.headBranch}</span>
-                      <span>{eventLabel(run.event)}</span>
-                    </div>
-                  </a>
-                ))}
+                {filteredRecentRuns.map((run) => {
+                  const kind = recentRunKind(run)
+                  return (
+                    <a
+                      key={`${run.repoName}:${run.workflowName}:${run.id}`}
+                      className={`recent-card is-${kind}`}
+                      href={run.htmlUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="在 GitHub 打开该 workflow 的运行详情"
+                    >
+                      <div className="recent-card-topline">
+                        <span className="recent-status-badge">
+                          {RECENT_STATUS_LABEL[kind]}
+                        </span>
+                        <span className="recent-time">
+                          {new Date(run.completedAt ?? run.startedAt).toLocaleDateString('zh-CN')}
+                        </span>
+                      </div>
+                      <span className="recent-card-repo">{run.repoName}</span>
+                      <strong className="recent-card-title">{run.workflowName}</strong>
+                      {run.displayTitle && run.displayTitle !== run.workflowName && (
+                        <span className="recent-card-display-title">{run.displayTitle}</span>
+                      )}
+                      <div className="recent-card-meta">
+                        <span>#{run.runNumber}</span>
+                      </div>
+                      <div className="recent-card-footer">
+                        <span>{run.headBranch}</span>
+                        <span>{eventLabel(run.event)}</span>
+                      </div>
+                    </a>
+                  )
+                })}
               </div>
             )}
           </section>

@@ -251,9 +251,9 @@ export function branchCheckKey(repoName: string, branch: string): string {
   return `${repoName}::${branch}`
 }
 
-/** 排队 run 中需要检查分支存在性的唯一 (仓库, 分支) 列表；空分支跳过（视为存在，不检查） */
+/** 排队/运行记录中需要检查分支存在性的唯一 (仓库, 分支) 列表；空分支跳过（视为存在，不检查） */
 export function uniqueBranchCheckKeys(
-  runs: QueuedWorkflowRun[],
+  runs: Array<{ repoName: string; headBranch: string }>,
 ): Array<{ repoName: string; branch: string; key: string }> {
   const seen = new Set<string>()
   const keys: Array<{ repoName: string; branch: string; key: string }> = []
@@ -337,19 +337,42 @@ export function dedupeLatestWorkflowRuns(runs: RecentWorkflowRun[]): RecentWorkf
 }
 
 /**
- * 最近运行记录的状态过滤：nonSuccessOnly=true 时仅保留「非成功」记录
- * （失败 / 已取消 / 超时等 success=false 的完成记录，以及运行中 success=false 的记录），
- * 成功的 workflow 不需要关注，因此默认不勾选展示全部。
+ * 最近运行记录的展示类型：按 run 的 status/conclusion 判定。
+ * - running：仍在运行（status 不为 completed）
+ * - cancelled：用户取消（conclusion === 'cancelled'），独立于失败展示
+ * - success：conclusion === 'success'
+ * - failure：其余完成且非成功的记录（失败 / 超时 / 跳过等）
+ */
+export type RecentRunKind = 'running' | 'success' | 'failure' | 'cancelled'
+
+export type RecentRunFilter = 'all' | RecentRunKind
+
+export function recentRunKind(run: RecentWorkflowRun): RecentRunKind {
+  if (run.status !== 'completed') {
+    return 'running'
+  }
+  if (run.conclusion === 'cancelled') {
+    return 'cancelled'
+  }
+  if (run.success) {
+    return 'success'
+  }
+  return 'failure'
+}
+
+/**
+ * 最近运行记录的状态过滤：all 不筛选，否则仅保留展示类型匹配的记录。
+ * 取消（cancelled）与失败（failure）是两种独立类型，各自可被单独筛选。
  */
 export function filterRecentRunsByStatus(
   runs: RecentWorkflowRun[],
-  nonSuccessOnly: boolean,
+  filter: RecentRunFilter,
 ): RecentWorkflowRun[] {
-  if (!nonSuccessOnly) {
+  if (filter === 'all') {
     return runs
   }
 
-  return runs.filter((run) => !run.success)
+  return runs.filter((run) => recentRunKind(run) === filter)
 }
 
 export function mergeRecentRuns(
