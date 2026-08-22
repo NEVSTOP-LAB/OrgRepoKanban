@@ -455,7 +455,7 @@ export function RunnerBoard({ client, org, onBack }: RunnerBoardProps) {
           </p>
           <div className="badge-row">
             <span className="badge">只读监控，无任何写操作</span>
-            <span className="badge">默认仅扫描 24 小时内有推送的仓库</span>
+            <span className="badge">排队队列默认仅扫描 24 小时内有推送的仓库</span>
             <span className="badge">支持自动刷新</span>
           </div>
         </div>
