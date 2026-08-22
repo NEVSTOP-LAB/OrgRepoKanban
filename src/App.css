@@ -1161,7 +1161,8 @@
 }
 
 .auto-refresh-select,
-.queue-sort-select {
+.queue-sort-select,
+.recent-filter-select {
   padding: 6px 28px 6px 10px;
   font-size: 12px;
   border: 1px solid rgba(0, 0, 0, 0.1);
@@ -1617,6 +1618,10 @@
   border-left: 4px solid #0d6efd;
 }
 
+.recent-card.is-cancelled {
+  border-left: 4px solid #6c757d;
+}
+
 .recent-card-topline,
 .recent-card-meta,
 .recent-card-footer {
@@ -1655,6 +1660,10 @@
 
 .recent-card.is-running .recent-status-badge {
   background: #0d6efd;
+}
+
+.recent-card.is-cancelled .recent-status-badge {
+  background: #6c757d;
 }
 
 .recent-card-title {

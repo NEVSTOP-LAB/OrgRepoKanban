@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GithubClient } from '../github/client'
@@ -133,6 +133,7 @@ describe('RunnerBoard', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     fetchMock.mockReset()
+    localStorage.clear()
     vi.stubGlobal('fetch', fetchMock)
   })
 
@@ -391,11 +392,13 @@ describe('RunnerBoard', () => {
 
     renderBoard()
 
-    expect(await screen.findByText('运行中')).toBeInTheDocument()
-    expect(screen.queryByText('失败')).not.toBeInTheDocument()
+    const card = (await screen.findByText('Review pull request')).closest<HTMLElement>('.recent-card')
+    expect(card).not.toBeNull()
+    expect(within(card!).getByText('运行中')).toBeInTheDocument()
+    expect(within(card!).queryByText('失败')).not.toBeInTheDocument()
   })
 
-  it('勾选「只显示非成功运行」后隐藏成功记录并保留失败记录', async () => {
+  it('状态筛选下拉：默认展示全部，可按失败/取消单独筛选', async () => {
     stubConnectedApi({}, {
       'repo-a': [
         {
@@ -430,21 +433,104 @@ describe('RunnerBoard', () => {
           conclusion: 'failure',
           actor: { login: 'alice' },
         },
+        {
+          id: 9203,
+          workflow_id: 101,
+          name: 'Release',
+          display_title: 'Release cut',
+          run_number: 23,
+          event: 'workflow_dispatch',
+          head_branch: 'main',
+          html_url: 'https://github.com/acme/repo-a/actions/runs/9203',
+          run_started_at: RECENT_RUN_STARTED_AT,
+          created_at: RECENT_RUN_STARTED_AT,
+          updated_at: RECENT_RUN_UPDATED_AT,
+          status: 'completed',
+          conclusion: 'cancelled',
+          actor: { login: 'alice' },
+        },
       ],
     })
 
     renderBoard()
 
-    // checkbox 文案存在
-    expect(await screen.findByLabelText('只显示非成功运行')).toBeInTheDocument()
-    // 默认不勾选：成功与失败记录都展示
-    expect(screen.getByText('成功')).toBeInTheDocument()
-    expect(screen.getByText('失败')).toBeInTheDocument()
+    const select = await screen.findByLabelText('筛选最近运行状态')
+    // 默认「全部状态」：成功/失败/取消三种记录都展示（用各自唯一的展示标题断言，避免与下拉选项冲突）
+    expect(await screen.findByText('Deploy production')).toBeInTheDocument()
+    expect(screen.getByText('Nightly build')).toBeInTheDocument()
+    expect(screen.getByText('Release cut')).toBeInTheDocument()
 
-    // 勾选后：成功记录隐藏，失败记录保留
-    fireEvent.click(screen.getByLabelText('只显示非成功运行'))
-    await waitFor(() => expect(screen.queryByText('成功')).not.toBeInTheDocument())
-    expect(screen.getByText('失败')).toBeInTheDocument()
+    // 筛选「失败」：只保留失败记录
+    fireEvent.change(select, { target: { value: 'failure' } })
+    await waitFor(() => expect(screen.queryByText('Deploy production')).not.toBeInTheDocument())
+    expect(screen.getByText('Nightly build')).toBeInTheDocument()
+    expect(screen.queryByText('Release cut')).not.toBeInTheDocument()
+
+    // 筛选「取消」：取消与失败互不影响
+    fireEvent.change(select, { target: { value: 'cancelled' } })
+    await waitFor(() => expect(screen.queryByText('Nightly build')).not.toBeInTheDocument())
+    expect(screen.getByText('Release cut')).toBeInTheDocument()
+  })
+
+  it('取消的运行显示「取消」并使用灰色样式，而非失败', async () => {
+    stubConnectedApi({}, {
+      'repo-a': [{
+        id: 9300,
+        workflow_id: 101,
+        name: 'Release',
+        display_title: 'Release cut',
+        run_number: 30,
+        event: 'workflow_dispatch',
+        head_branch: 'main',
+        html_url: 'https://github.com/acme/repo-a/actions/runs/9300',
+        run_started_at: RECENT_RUN_STARTED_AT,
+        created_at: RECENT_RUN_STARTED_AT,
+        updated_at: RECENT_RUN_UPDATED_AT,
+        status: 'completed',
+        conclusion: 'cancelled',
+        actor: { login: 'alice' },
+      }],
+    })
+
+    renderBoard()
+
+    const card = (await screen.findByText('Release cut')).closest<HTMLElement>('.recent-card')
+    expect(card).not.toBeNull()
+    expect(card).toHaveClass('is-cancelled')
+    expect(card).not.toHaveClass('is-failure')
+    expect(within(card!).getByText('取消')).toBeInTheDocument()
+  })
+
+  it('隐藏分支已删除的最近运行记录（30 天运行记录亦遵循分支存在性规则）', async () => {
+    stubConnectedApi(
+      {},
+      {
+        'repo-a': [{
+          id: 9301,
+          workflow_id: 101,
+          name: 'CI',
+          display_title: 'CI / feature-x',
+          run_number: 7,
+          event: 'push',
+          head_branch: 'feature-x',
+          html_url: 'https://github.com/acme/repo-a/actions/runs/9301',
+          run_started_at: RECENT_RUN_STARTED_AT,
+          created_at: RECENT_RUN_STARTED_AT,
+          updated_at: RECENT_RUN_UPDATED_AT,
+          status: 'completed',
+          conclusion: 'success',
+          actor: { login: 'alice' },
+        }],
+      },
+      [{ repo: 'repo-a', branch: 'feature-x' }],
+    )
+
+    renderBoard()
+
+    await waitFor(() => expect(screen.getByText('linux-1')).toBeInTheDocument())
+    // 分支已删除的运行记录被隐藏，不展示其 workflow 卡片
+    expect(screen.queryByText('CI / feature-x')).not.toBeInTheDocument()
+    expect(screen.getByText(/最近 30 天内没有可展示的 action 记录/)).toBeInTheDocument()
   })
 
   it('updates running workflow status after it completes on next refresh', async () => {
@@ -501,10 +587,15 @@ describe('RunnerBoard', () => {
 
     renderBoard()
 
-    expect(await screen.findByText('运行中')).toBeInTheDocument()
+    const cardBefore = (await screen.findByText('Deploy production')).closest<HTMLElement>('.recent-card')
+    expect(within(cardBefore!).getByText('运行中')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '刷新' }))
-    await waitFor(() => expect(screen.getByText('成功')).toBeInTheDocument())
-    expect(screen.queryByText('运行中')).not.toBeInTheDocument()
+    await waitFor(() => {
+      const card = screen.getByText('Deploy production').closest<HTMLElement>('.recent-card')
+      expect(within(card!).getByText('成功')).toBeInTheDocument()
+    })
+    const card = screen.getByText('Deploy production').closest<HTMLElement>('.recent-card')
+    expect(within(card!).queryByText('运行中')).not.toBeInTheDocument()
     expect(recentRunsCallCount).toBeGreaterThanOrEqual(2)
   })
 
